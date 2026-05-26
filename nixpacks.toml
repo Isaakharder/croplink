@@ -1,0 +1,13 @@
+[phases.setup]
+nixPkgs = ["nodejs_20"]
+
+[phases.build]
+cmds = [
+  "npm ci --workspace=client",
+  "npm ci --workspace=server",
+  "npm run build --workspace=client",
+  "npm run build --workspace=server"
+]
+
+[start]
+cmd = "npm run start"
