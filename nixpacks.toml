@@ -1,10 +1,11 @@
 [phases.setup]
 nixPkgs = ["nodejs_20"]
 
+[phases.install]
+cmds = ["npm ci"]
+
 [phases.build]
 cmds = [
-  "npm ci --workspace=client",
-  "npm ci --workspace=server",
   "npm run build --workspace=client",
   "npm run build --workspace=server"
 ]
