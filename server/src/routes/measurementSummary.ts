@@ -12,6 +12,11 @@ type SummaryStatus =
   | 'Missing'
   | 'Empty';
 
+type BiologicalStatus = Exclude<SummaryStatus, 'Missing' | 'Empty'>;
+const BIOLOGICAL_STATUSES: BiologicalStatus[] = [
+  'Flower', 'SetFruit', 'MatureGreen', 'BreakerFruit', 'Harvested', 'Pruned', 'Aborted',
+];
+
 const router = Router();
 
 router.get('/', async (req: Request, res: Response, next: NextFunction) => {
@@ -24,6 +29,34 @@ router.get('/', async (req: Request, res: Response, next: NextFunction) => {
     const yearValue = Number(year);
     const weekValue = Number(weekNumber);
 
+    // Fetch variety so we can compute per-m² values
+    const { data: variety } = await supabase
+      .from('varieties')
+      .select('area_m2, total_stem_count')
+      .eq('id', varietyId as string)
+      .single();
+    const areaM2: number = variety?.area_m2 ?? 0;
+    const totalStemCount: number = variety?.total_stem_count ?? 0;
+
+    const emptyPerM2 = Object.fromEntries(BIOLOGICAL_STATUSES.map(s => [s, 0])) as Record<BiologicalStatus, number>;
+    const emptyStatusCounts: Record<SummaryStatus, number> = {
+      Aborted: 0, Pruned: 0, Flower: 0, SetFruit: 0,
+      MatureGreen: 0, BreakerFruit: 0, Harvested: 0, Missing: 0, Empty: 0,
+    };
+    const emptyResponse = {
+      summary: {
+        totalMeasuredRows: 0,
+        totalMeasuredStems: 0,
+        totalNodesRecorded: 0,
+        statusCounts: { ...emptyStatusCounts },
+        measuredStemCount: 0,
+        varietyAreaM2: areaM2,
+        varietyTotalStemCount: totalStemCount,
+        perM2ByStatus: { ...emptyPerM2 },
+      },
+      records: [] as unknown[],
+    };
+
     const { data: rows, error: rowsError } = await supabase
       .from('measurement_rows')
       .select('id, row_name, sort_order, is_active')
@@ -34,27 +67,7 @@ router.get('/', async (req: Request, res: Response, next: NextFunction) => {
 
     const rowMap = new Map((rows ?? []).map(row => [row.id, row]));
     const rowIds = (rows ?? []).map(row => row.id);
-    if (rowIds.length === 0) {
-      return res.json({
-        summary: {
-          totalMeasuredRows: 0,
-          totalMeasuredStems: 0,
-          totalNodesRecorded: 0,
-          statusCounts: {
-            Aborted: 0,
-            Pruned: 0,
-            Flower: 0,
-            SetFruit: 0,
-            MatureGreen: 0,
-            BreakerFruit: 0,
-            Harvested: 0,
-            Missing: 0,
-            Empty: 0,
-          },
-        },
-        records: [],
-      });
-    }
+    if (rowIds.length === 0) return res.json(emptyResponse);
 
     const { data: stems, error: stemsError } = await supabase
       .from('measurement_stems')
@@ -66,27 +79,7 @@ router.get('/', async (req: Request, res: Response, next: NextFunction) => {
 
     const stemMap = new Map((stems ?? []).map(stem => [stem.id, stem]));
     const stemIds = (stems ?? []).map(stem => stem.id);
-    if (stemIds.length === 0) {
-      return res.json({
-        summary: {
-          totalMeasuredRows: 0,
-          totalMeasuredStems: 0,
-          totalNodesRecorded: 0,
-          statusCounts: {
-            Aborted: 0,
-            Pruned: 0,
-            Flower: 0,
-            SetFruit: 0,
-            MatureGreen: 0,
-            BreakerFruit: 0,
-            Harvested: 0,
-            Missing: 0,
-            Empty: 0,
-          },
-        },
-        records: [],
-      });
-    }
+    if (stemIds.length === 0) return res.json(emptyResponse);
 
     const { data: nodes, error: nodesError } = await supabase
       .from('plant_nodes')
@@ -143,22 +136,36 @@ router.get('/', async (req: Request, res: Response, next: NextFunction) => {
     const measuredRows = new Set(recorded.map(record => record.rowId).filter(Boolean));
     const measuredStems = new Set(recorded.map(record => record.stemId).filter(Boolean));
 
-    const statusCounts: Record<SummaryStatus, number> = {
-      Aborted: 0,
-      Pruned: 0,
-      Flower: 0,
-      SetFruit: 0,
-      MatureGreen: 0,
-      BreakerFruit: 0,
-      Harvested: 0,
-      Missing: 0,
-      Empty: 0,
-    };
-
+    const statusCounts: Record<SummaryStatus, number> = { ...emptyStatusCounts };
     for (const record of recorded) {
       const status = record.status as SummaryStatus;
       if (status in statusCounts) statusCounts[status] += 1;
     }
+
+    // Per-m² calculation: only active records count
+    const activeRecorded = recorded.filter(r => r.isActive);
+    const activeMeasuredStems = new Set(activeRecorded.map(r => r.stemId).filter(Boolean));
+    const measuredStemCount = activeMeasuredStems.size;
+
+    const activeStatusCounts: Partial<Record<string, number>> = {};
+    for (const r of activeRecorded) {
+      activeStatusCounts[r.status] = (activeStatusCounts[r.status] ?? 0) + 1;
+    }
+
+    function toPerM2(count: number): number {
+      if (measuredStemCount === 0 || areaM2 === 0) return 0;
+      return Math.round((count / measuredStemCount) * totalStemCount / areaM2 * 100) / 100;
+    }
+
+    const perM2ByStatus: Record<BiologicalStatus, number> = {
+      Flower:       toPerM2(activeStatusCounts['Flower']       ?? 0),
+      SetFruit:     toPerM2(activeStatusCounts['SetFruit']     ?? 0),
+      MatureGreen:  toPerM2(activeStatusCounts['MatureGreen']  ?? 0),
+      BreakerFruit: toPerM2(activeStatusCounts['BreakerFruit'] ?? 0),
+      Harvested:    toPerM2(activeStatusCounts['Harvested']    ?? 0),
+      Pruned:       toPerM2(activeStatusCounts['Pruned']       ?? 0),
+      Aborted:      toPerM2(activeStatusCounts['Aborted']      ?? 0),
+    };
 
     res.json({
       summary: {
@@ -166,6 +173,10 @@ router.get('/', async (req: Request, res: Response, next: NextFunction) => {
         totalMeasuredStems: measuredStems.size,
         totalNodesRecorded: recorded.length,
         statusCounts,
+        measuredStemCount,
+        varietyAreaM2: areaM2,
+        varietyTotalStemCount: totalStemCount,
+        perM2ByStatus,
       },
       records,
     });

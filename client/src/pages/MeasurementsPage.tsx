@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { MeasurementSummaryResponse, Season, Variety } from '../types';
 import { measurementSummaryApi, varietiesApi, yearsApi } from '../services/api';
-import { defaultYear, uniqueYears, yearNumbers } from '../utils/years';
+import { defaultYear, getIsoWeek, isoWeeksInYear, uniqueYears, yearNumbers } from '../utils/years';
 
 const EMPTY_SUMMARY: MeasurementSummaryResponse = {
   summary: {
@@ -18,9 +18,31 @@ const EMPTY_SUMMARY: MeasurementSummaryResponse = {
       BreakerFruit: 0,
       Harvested: 0,
     },
+    measuredStemCount: 0,
+    varietyAreaM2: 0,
+    varietyTotalStemCount: 0,
+    perM2ByStatus: {
+      Aborted: 0,
+      Pruned: 0,
+      Flower: 0,
+      SetFruit: 0,
+      MatureGreen: 0,
+      BreakerFruit: 0,
+      Harvested: 0,
+    },
   },
   records: [],
 };
+
+const PER_M2_CARDS: { key: keyof MeasurementSummaryResponse['summary']['perM2ByStatus']; label: string }[] = [
+  { key: 'Flower',       label: 'Flower / m²' },
+  { key: 'SetFruit',     label: 'Set Fruit / m²' },
+  { key: 'MatureGreen',  label: 'Mature Green / m²' },
+  { key: 'BreakerFruit', label: 'Breaker Fruit / m²' },
+  { key: 'Harvested',    label: 'Harvested / m²' },
+  { key: 'Pruned',       label: 'Pruned / m²' },
+  { key: 'Aborted',      label: 'Aborted / m²' },
+];
 
 function statusClass(status: string): string {
   if (status === 'GolfBall' || status === 'Harvestable' || status === 'Missing' || status === 'Empty') return 'status-legacy';
@@ -41,7 +63,7 @@ export function MeasurementsPage() {
   const [varieties, setVarieties] = useState<Variety[]>([]);
   const [selectedYear, setSelectedYear] = useState(0);
   const [selectedVariety, setSelectedVariety] = useState('');
-  const [selectedWeek, setSelectedWeek] = useState(1);
+  const [selectedWeek, setSelectedWeek] = useState(() => getIsoWeek(new Date()));
   const [summaryData, setSummaryData] = useState<MeasurementSummaryResponse>(EMPTY_SUMMARY);
   const [loadingSummary, setLoadingSummary] = useState(false);
 
@@ -100,7 +122,7 @@ export function MeasurementsPage() {
         </select>
         <label>Week</label>
         <select className="form-control" style={{ width: 90 }} value={selectedWeek} onChange={e => setSelectedWeek(Number(e.target.value))}>
-          {Array.from({ length: 52 }, (_, i) => i + 1).map(w => (
+          {Array.from({ length: isoWeeksInYear(selectedYear || new Date().getFullYear()) }, (_, i) => i + 1).map(w => (
             <option key={w} value={w}>Wk {w}</option>
           ))}
         </select>
@@ -112,52 +134,12 @@ export function MeasurementsPage() {
         ) : (
           <>
             <div className="grid-4 mb-4">
-              <div className="stat-card">
-                <div className="stat-label">Total Measured Rows</div>
-                <div className="stat-value">{summaryData.summary.totalMeasuredRows}</div>
-              </div>
-              <div className="stat-card">
-                <div className="stat-label">Total Measured Stems</div>
-                <div className="stat-value">{summaryData.summary.totalMeasuredStems}</div>
-              </div>
-              <div className="stat-card">
-                <div className="stat-label">Total Nodes Recorded</div>
-                <div className="stat-value">{summaryData.summary.totalNodesRecorded}</div>
-              </div>
-              <div className="stat-card">
-                <div className="stat-label">Set Fruit</div>
-                <div className="stat-value">{summaryData.summary.statusCounts.SetFruit}</div>
-              </div>
-            </div>
-
-            <div className="grid-4 mb-4">
-              <div className="stat-card">
-                <div className="stat-label">Breaker Fruit</div>
-                <div className="stat-value">{summaryData.summary.statusCounts.BreakerFruit}</div>
-              </div>
-              <div className="stat-card">
-                <div className="stat-label">Harvested</div>
-                <div className="stat-value">{summaryData.summary.statusCounts.Harvested}</div>
-              </div>
-              <div className="stat-card">
-                <div className="stat-label">Legacy: Missing</div>
-                <div className="stat-value">{summaryData.summary.statusCounts.Missing ?? 0}</div>
-              </div>
-              <div className="stat-card">
-                <div className="stat-label">Aborted</div>
-                <div className="stat-value">{summaryData.summary.statusCounts.Aborted}</div>
-              </div>
-            </div>
-
-            <div className="grid-4 mb-4">
-              <div className="stat-card">
-                <div className="stat-label">Pruned</div>
-                <div className="stat-value">{summaryData.summary.statusCounts.Pruned}</div>
-              </div>
-              <div className="stat-card">
-                <div className="stat-label">Legacy: Empty</div>
-                <div className="stat-value">{summaryData.summary.statusCounts.Empty ?? 0}</div>
-              </div>
+              {PER_M2_CARDS.map(({ key, label }) => (
+                <div key={key} className="stat-card">
+                  <div className="stat-label">{label}</div>
+                  <div className="stat-value">{summaryData.summary.perM2ByStatus[key].toFixed(2)}</div>
+                </div>
+              ))}
             </div>
 
             <div className="card">

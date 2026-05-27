@@ -4,14 +4,7 @@ import { MeasurementStem, NodeStatus, PlantNode, WeeklyNodeStatus } from '../typ
 import { nodesApi, stemsApi, weeklyStatusesApi, yearsApi } from '../services/api';
 import { OfflineBanner } from '../components/OfflineBanner';
 import { onRemap } from '../services/optimisticStore';
-
-function getIsoWeek(d: Date): number {
-  const date = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
-  const dayNum = date.getUTCDay() || 7;
-  date.setUTCDate(date.getUTCDate() + 4 - dayNum);
-  const yearStart = new Date(Date.UTC(date.getUTCFullYear(), 0, 1));
-  return Math.ceil((((date.getTime() - yearStart.getTime()) / 86400000) + 1) / 7);
-}
+import { getIsoWeek } from '../utils/years';
 
 const STATUS_OPTIONS: { value: NodeStatus; label: string }[] = [
   { value: 'Aborted',      label: 'Aborted' },
@@ -112,7 +105,7 @@ export function RowCanvasPage() {
   const [addStemModal,    setAddStemModal]    = useState(false);
   const [addNodeContext,  setAddNodeContext]  = useState<MeasurementStem | null>(null);
   const [addNodeNumber,   setAddNodeNumber]   = useState(1);
-  const [statusPickerCtx, setStatusPickerCtx] = useState<{ stem: MeasurementStem; node: PlantNode } | null>(null);
+  const [statusPickerCtx, setStatusPickerCtx] = useState<{ stem: MeasurementStem; node: PlantNode; isNew?: boolean } | null>(null);
   const [saving,   setSaving]   = useState(false);
   const [message,  setMessage]  = useState('');
 
@@ -212,20 +205,20 @@ export function RowCanvasPage() {
     canvasRef.current?.scrollTo({ top: 0, behavior: 'smooth' });
   }
 
-  async function handleAddNode(stem: MeasurementStem) {
-    const nodeNum = addNodeNumber;
+  async function handleAddNode(stem: MeasurementStem, nodeNum?: number) {
+    const num = nodeNum ?? addNodeNumber;
     const existing = (nodesByStem[stem.id] ?? []).find(
-      n => !n.is_side_shoot && n.node_number === nodeNum,
+      n => !n.is_side_shoot && n.node_number === num,
     );
     if (existing) {
       setAddNodeContext(null);
-      setStatusPickerCtx({ stem, node: existing });
+      setStatusPickerCtx({ stem, node: existing, isNew: false });
       return;
     }
     const created = await nodesApi.create({
       measurement_stem_id: stem.id,
-      node_number: nodeNum,
-      sort_order: nodeNum,
+      node_number: num,
+      sort_order: num,
     });
     setNodesByStem(prev => {
       const list = [...(prev[stem.id] ?? []), created];
@@ -235,7 +228,7 @@ export function RowCanvasPage() {
       };
     });
     setAddNodeContext(null);
-    setStatusPickerCtx({ stem, node: created });
+    setStatusPickerCtx({ stem, node: created, isNew: true });
     canvasRef.current?.scrollTo({ top: 0, behavior: 'smooth' });
   }
 
@@ -262,7 +255,7 @@ export function RowCanvasPage() {
         [activeStem.id]: list.sort((a, b) => a.sort_order - b.sort_order || a.node_number - b.node_number),
       };
     });
-    setStatusPickerCtx({ stem: activeStem, node: created });
+    setStatusPickerCtx({ stem: activeStem, node: created, isNew: true });
   }
 
   async function handleSaveStatus(status: NodeStatus) {
@@ -295,6 +288,19 @@ export function RowCanvasPage() {
     } finally {
       setSaving(false);
     }
+  }
+
+  async function handleCancelStatusPicker() {
+    if (!statusPickerCtx) return;
+    if (statusPickerCtx.isNew) {
+      const { stem, node } = statusPickerCtx;
+      setNodesByStem(prev => ({
+        ...prev,
+        [stem.id]: (prev[stem.id] ?? []).filter(n => n.id !== node.id),
+      }));
+      try { await nodesApi.setActive(node.id, false); } catch { /* best effort */ }
+    }
+    setStatusPickerCtx(null);
   }
 
   // ── Derived values for the active stem ──────────────────────────────
@@ -400,11 +406,7 @@ export function RowCanvasPage() {
             {/* Growing tip — always at the top */}
             <button
               className="stem-add-node-btn"
-              onClick={() => {
-                const mainCount = mainNodes.length;
-                setAddNodeNumber(mainCount + 1 || 1);
-                setAddNodeContext(activeStem);
-              }}
+              onClick={() => { handleAddNode(activeStem!, mainNodes.length + 1 || 1); }}
             >
               + Node
             </button>
@@ -557,7 +559,7 @@ export function RowCanvasPage() {
 
       {/* ── Status picker ── */}
       {statusPickerCtx && (
-        <div className="modal-overlay" onClick={() => setStatusPickerCtx(null)}>
+        <div className="modal-overlay" onClick={() => handleCancelStatusPicker()}>
           <div className="modal" style={{ maxWidth: 480 }} onClick={e => e.stopPropagation()}>
             <div className="modal-title">
               {pickerNodeLabel}
@@ -586,7 +588,7 @@ export function RowCanvasPage() {
               })}
             </div>
             <div className="modal-actions">
-              <button className="btn btn-secondary" onClick={() => setStatusPickerCtx(null)}>Close</button>
+              <button className="btn btn-secondary" onClick={() => handleCancelStatusPicker()}>Cancel</button>
             </div>
           </div>
         </div>

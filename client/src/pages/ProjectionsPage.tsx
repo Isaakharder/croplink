@@ -3,14 +3,6 @@ import { Season, Variety, HarvestProjectionsResult, BreakerLearningResult } from
 import { yearsApi, varietiesApi, harvestProjectionsApi, breakerLearningApi } from '../services/api';
 import { defaultYear, uniqueYears } from '../utils/years';
 
-function getIsoWeek(d: Date): number {
-  const date = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
-  const day = date.getUTCDay() || 7;
-  date.setUTCDate(date.getUTCDate() + 4 - day);
-  const yearStart = new Date(Date.UTC(date.getUTCFullYear(), 0, 1));
-  return Math.ceil((((date.getTime() - yearStart.getTime()) / 86400000) + 1) / 7);
-}
-
 export function ProjectionsPage() {
   const [seasons, setSeasons] = useState<Season[]>([]);
   const [varieties, setVarieties] = useState<Variety[]>([]);
@@ -67,7 +59,35 @@ export function ProjectionsPage() {
 
   const activeWeeks = useMemo(() => {
     if (!data) return [];
-    return data.weeklyTotals.filter((w) => w.totalKg > 0).map((w) => w.week);
+    const weekSet = new Set<number>();
+    for (const v of data.varieties) {
+      for (const w of v.weeks) {
+        if (w.projectedFruitPerM2 > 0) weekSet.add(w.week);
+      }
+    }
+    return Array.from(weekSet).sort((a, b) => a - b);
+  }, [data]);
+
+  const hasMissingAfwWeeks = useMemo(() => {
+    if (!data) return false;
+    for (const v of data.varieties) {
+      for (const w of v.weeks) {
+        if (w.projectedFruitPerM2 > 0 && w.projectedKg === 0) return true;
+      }
+    }
+    return false;
+  }, [data]);
+
+  const fruitPerM2Map = useMemo(() => {
+    const map: Record<string, Record<number, number>> = {};
+    if (!data) return map;
+    for (const v of data.varieties) {
+      map[v.id] = {};
+      for (const w of v.weeks) {
+        if (w.projectedFruitPerM2 > 0) map[v.id][w.week] = w.projectedFruitPerM2;
+      }
+    }
+    return map;
   }, [data]);
 
   const weeklyRows = useMemo(() => {
@@ -136,6 +156,12 @@ export function ProjectionsPage() {
             </div>
           ) : (
             <>
+              {hasMissingAfwWeeks && (
+                <div className="warning-banner">
+                  Some harvest weeks have projected fruit but no AFW/g — enter AFW/g in the Calculator to see kg estimates.
+                </div>
+              )}
+
               {/* Breaker adjustment card — only when a single variety is selected */}
               {breakerData && selectedVarietyId && (() => {
                 const currentWeek = breakerData.currentWeek;
@@ -289,11 +315,21 @@ export function ProjectionsPage() {
                       {weeklyRows.map(({ week, byVariety, totalKg }) => (
                         <tr key={week}>
                           <td className="proj-wk-col">W{week}</td>
-                          {data.varieties.map((v) => (
-                            <td key={v.id} className="num-cell">
-                              {fmt(byVariety[v.id] ?? 0)}
-                            </td>
-                          ))}
+                          {data.varieties.map((v) => {
+                            const kg = byVariety[v.id] ?? 0;
+                            const fruitPerM2 = fruitPerM2Map[v.id]?.[week] ?? 0;
+                            if (kg > 0) {
+                              return <td key={v.id} className="num-cell">{fmt(kg)}</td>;
+                            } else if (fruitPerM2 > 0) {
+                              return (
+                                <td key={v.id} className="num-cell proj-no-afw">
+                                  {fruitPerM2.toFixed(2)}<span className="proj-m2-unit">/m²</span>
+                                </td>
+                              );
+                            } else {
+                              return <td key={v.id} className="num-cell">—</td>;
+                            }
+                          })}
                           {data.varieties.length > 1 && (
                             <td className="num-cell proj-total-col">
                               <strong>{fmt(totalKg)}</strong>

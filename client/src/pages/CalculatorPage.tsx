@@ -1,15 +1,7 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { Season, Variety, HarvestTimingProfile, ProjectionResult, RipeningActualsRow } from '../types';
 import { varietiesApi, yearsApi, harvestTimingApi, projectionApi, fruitSetByWeekApi, fruitWeightsApi, ripeningActualsApi } from '../services/api';
-import { defaultYear, uniqueYears, yearNumbers } from '../utils/years';
-
-function getIsoWeek(d: Date): number {
-  const date = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
-  const day = date.getUTCDay() || 7;
-  date.setUTCDate(date.getUTCDate() + 4 - day);
-  const yearStart = new Date(Date.UTC(date.getUTCFullYear(), 0, 1));
-  return Math.ceil((((date.getTime() - yearStart.getTime()) / 86400000) + 1) / 7);
-}
+import { defaultYear, getIsoWeek, uniqueYears, yearNumbers } from '../utils/years';
 
 type RowDraft = {
   set_week_number: number;
@@ -38,8 +30,7 @@ function calcCheck(row: RowDraft): number {
 
 function hasData(row: RowDraft): boolean {
   return Number(row.avg_fruit_set || 0) > 0 ||
-    Number(row.week4_percent || 0) > 0 ||
-    Number(row.week5_percent || 0) > 0;
+    WEEK_COLS.some(col => Number((row[col] as string) || 0) > 0);
 }
 
 function makeEmptyRows(): RowDraft[] {

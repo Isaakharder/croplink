@@ -167,6 +167,38 @@ console.log('\nBreaker learning');
   assert('nextWeekYear increments to 2026', nextWeekYear, 2026);
 }
 
+// ── Set-week AFW lookup (end-to-end with correct key) ────────────────────────
+console.log('\nSet-week AFW lookup');
+{
+  // setWeek=22, avgFruitSet=10/m², week6%=6, week7%=34, area=1000m², AFW@setWeek22=200g
+  // harvest week 28 (22+6): fruit/m² = 10 * 0.06 = 0.6, kg = 0.6 * 1000 * 200/1000 = 120
+  // harvest week 29 (22+7): fruit/m² = 10 * 0.34 = 3.4, kg = 3.4 * 1000 * 200/1000 = 680
+  const projectedByWeek: Record<number, number> = {};
+  const kgByWeek: Record<number, number> = {};
+  for (let w = 1; w <= 52; w++) { projectedByWeek[w] = 0; kgByWeek[w] = 0; }
+
+  const setWeek = 22;
+  const setAmount = 10;
+  const setWeekAfw = 200;
+  const areaM2 = 1000;
+
+  for (const [offset, pct] of [[6, 6], [7, 34]] as [number, number][]) {
+    const harvestWeek = setWeek + offset;
+    if (harvestWeek >= 1 && harvestWeek <= 52) {
+      const fruitContrib = setAmount * (pct / 100);
+      projectedByWeek[harvestWeek] += fruitContrib;
+      if (setWeekAfw > 0 && areaM2 > 0) {
+        kgByWeek[harvestWeek] += fruitContrib * areaM2 * setWeekAfw / 1000;
+      }
+    }
+  }
+
+  assertClose('week28 fruit/m²', projectedByWeek[28], 0.6);
+  assertClose('week29 fruit/m²', projectedByWeek[29], 3.4);
+  assertClose('week28 kg', kgByWeek[28], 120);
+  assertClose('week29 kg', kgByWeek[29], 680);
+}
+
 // ── Summary ───────────────────────────────────────────────────────────────────
 console.log(`\n${pass + fail} tests: ${pass} passed, ${fail} failed`);
 if (fail > 0) process.exit(1);

@@ -104,35 +104,38 @@ router.get('/', async (req: Request, res: Response, next: NextFunction) => {
       const weights = weightMap[variety.id] ?? {};
       const colorKey = variety.color ?? 'Unknown';
 
-      // Compute projected fruit/m² per week from timing profiles
+      // Compute projected fruit/m² and kg per harvest week.
+      // AFW is looked up by SET week (matches how the Calculator saves it:
+      // fruit_weight_by_week.week_number = set_week_number).
       const projectedByWeek: Record<number, number> = {};
-      for (let w = 1; w <= 52; w++) projectedByWeek[w] = 0;
+      const kgByWeek: Record<number, number> = {};
+      for (let w = 1; w <= 52; w++) { projectedByWeek[w] = 0; kgByWeek[w] = 0; }
 
       for (const profile of profiles) {
         const setWeek = profile.set_week_number as number;
         const setAmount = Number(profile.avg_fruit_set) || 0;
+        const setWeekAfw = weights[setWeek] ?? 0; // AFW keyed by set week
 
         for (const [field, offset] of percentFields) {
           const pct = Number(profile[field]) || 0;
           if (pct <= 0) continue;
           const harvestWeek = setWeek + offset;
           if (harvestWeek >= 1 && harvestWeek <= 52) {
-            projectedByWeek[harvestWeek] += setAmount * (pct / 100);
+            const fruitContrib = setAmount * (pct / 100);
+            projectedByWeek[harvestWeek] += fruitContrib;
+            if (setWeekAfw > 0 && area > 0) {
+              kgByWeek[harvestWeek] += fruitContrib * area * setWeekAfw / 1000;
+            }
           }
         }
       }
 
-      // Convert to kg using AFW for each harvest week
       let totalKg = 0;
       const weekData: { week: number; projectedFruitPerM2: number; projectedKg: number }[] = [];
 
       for (let w = 1; w <= 52; w++) {
         const fruitPerM2 = projectedByWeek[w];
-        const weightGrams = weights[w] ?? 0;
-        const kg =
-          fruitPerM2 > 0 && area > 0 && weightGrams > 0
-            ? (fruitPerM2 * area * weightGrams) / 1000
-            : 0;
+        const kg = kgByWeek[w];
 
         weekData.push({
           week: w,

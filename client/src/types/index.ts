@@ -238,6 +238,10 @@ export interface MeasurementSummaryResponse {
     totalMeasuredStems: number;
     totalNodesRecorded: number;
     statusCounts: Record<NodeStatus, number> & Partial<Record<LegacyNodeStatus, number>>;
+    measuredStemCount: number;
+    varietyAreaM2: number;
+    varietyTotalStemCount: number;
+    perM2ByStatus: Record<NodeStatus, number>;
   };
   records: MeasurementSummaryRecord[];
 }

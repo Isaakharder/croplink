@@ -46,8 +46,8 @@ router.post('/upsert', async (req: Request, res: Response, next: NextFunction) =
     if (!plantNodeId || !year || !weekNumber) {
       return res.status(400).json({ error: 'plantNodeId, year, and weekNumber are required' });
     }
-    if (weekNumber < 1 || weekNumber > 52) {
-      return res.status(400).json({ error: 'weekNumber must be between 1 and 52' });
+    if (weekNumber < 1 || weekNumber > 53) {
+      return res.status(400).json({ error: 'weekNumber must be between 1 and 53' });
     }
 
     // Save the weekly node status (existing behaviour, unchanged)
