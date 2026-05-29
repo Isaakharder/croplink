@@ -12,7 +12,9 @@
       "PowerShell(\\(Get-Content \"c:\\\\CropLink\\\\client\\\\src\\\\styles.css\" | Measure-Object -Line\\).Lines)",
       "PowerShell(\\(Get-Content \"c:\\\\CropLink\\\\client\\\\src\\\\styles.css\"\\).Count)",
       "Bash(npx tsc *)",
-      "PowerShell(cd c:\\\\CropLink; $env:NODE_ENV=\"production\"; $proc = Start-Process -PassThru -FilePath \"npm\" -ArgumentList \"run\",\"start\" -RedirectStandardOutput \"$env:TEMP\\\\cl_start.txt\" -RedirectStandardError \"$env:TEMP\\\\cl_start_err.txt\"; Start-Sleep -Seconds 3; $out = Get-Content \"$env:TEMP\\\\cl_start.txt\" -ErrorAction SilentlyContinue; $err = Get-Content \"$env:TEMP\\\\cl_start_err.txt\" -ErrorAction SilentlyContinue; $running = -not $proc.HasExited; Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue; \"Running=$running\"; $out; $err)"
+      "PowerShell(cd c:\\\\CropLink; $env:NODE_ENV=\"production\"; $proc = Start-Process -PassThru -FilePath \"npm\" -ArgumentList \"run\",\"start\" -RedirectStandardOutput \"$env:TEMP\\\\cl_start.txt\" -RedirectStandardError \"$env:TEMP\\\\cl_start_err.txt\"; Start-Sleep -Seconds 3; $out = Get-Content \"$env:TEMP\\\\cl_start.txt\" -ErrorAction SilentlyContinue; $err = Get-Content \"$env:TEMP\\\\cl_start_err.txt\" -ErrorAction SilentlyContinue; $running = -not $proc.HasExited; Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue; \"Running=$running\"; $out; $err)",
+      "Bash(git rebase *)",
+      "Bash(git add *)"
     ]
   }
 }

@@ -290,6 +290,7 @@ export function RowCanvasPage() {
     }
   }
 
+<<<<<<< HEAD
   async function handleCancelStatusPicker() {
     if (!statusPickerCtx) return;
     if (statusPickerCtx.isNew) {
@@ -301,6 +302,36 @@ export function RowCanvasPage() {
       try { await nodesApi.setActive(node.id, false); } catch { /* best effort */ }
     }
     setStatusPickerCtx(null);
+=======
+  async function handlePickerNodeSwitch(nodeNum: number) {
+    if (!statusPickerCtx || saving) return;
+    const stem = statusPickerCtx.stem;
+    const existing = (nodesByStem[stem.id] ?? []).find(
+      n => !n.is_side_shoot && n.node_number === nodeNum,
+    );
+    if (existing) {
+      setStatusPickerCtx({ stem, node: existing });
+      return;
+    }
+    setSaving(true);
+    try {
+      const created = await nodesApi.create({
+        measurement_stem_id: stem.id,
+        node_number: nodeNum,
+        sort_order: nodeNum,
+      });
+      setNodesByStem(prev => {
+        const list = [...(prev[stem.id] ?? []), created];
+        return {
+          ...prev,
+          [stem.id]: list.sort((a, b) => a.sort_order - b.sort_order || a.node_number - b.node_number),
+        };
+      });
+      setStatusPickerCtx({ stem, node: created });
+    } finally {
+      setSaving(false);
+    }
+>>>>>>> 9534d89 (Add node number selector to mobile status picker)
   }
 
   // ── Derived values for the active stem ──────────────────────────────
@@ -567,6 +598,21 @@ export function RowCanvasPage() {
                 {statusPickerCtx.stem.stem_name}
               </span>
             </div>
+            {!statusPickerCtx.node.is_side_shoot && (
+              <div className="form-group" style={{ marginBottom: 12 }}>
+                <label className="form-label">Node Number</label>
+                <select
+                  className="form-control mobile-control"
+                  value={statusPickerCtx.node.node_number}
+                  onChange={e => handlePickerNodeSwitch(Number(e.target.value))}
+                  disabled={saving}
+                >
+                  {Array.from({ length: 100 }, (_, i) => i + 1).map(n => (
+                    <option key={n} value={n}>Node {n}</option>
+                  ))}
+                </select>
+              </div>
+            )}
             <div className="status-picker-grid">
               {STATUS_OPTIONS.map(opt => {
                 const cfg = STATUS_CONFIG[opt.value];
