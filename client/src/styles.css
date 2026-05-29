@@ -306,6 +306,48 @@ table tr.inactive td {
   opacity: 0.45;
 }
 
+table tr.report-group__header-row:hover td {
+  background: var(--gray-50);
+}
+
+.report-group__header-row td {
+  padding: 0;
+  border-bottom: 1px solid var(--gray-200);
+}
+
+.report-group__toggle {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 0;
+  background: var(--gray-25, #fcfcfd);
+  color: var(--gray-700);
+  font: inherit;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+}
+
+.report-group__toggle:hover {
+  background: var(--gray-50);
+}
+
+.report-group__indicator {
+  width: 20px;
+  flex: 0 0 20px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.report-group__summary {
+  white-space: nowrap;
+}
+
 /* Badges */
 .badge {
   display: inline-block;
@@ -592,7 +634,7 @@ table tr.inactive td {
   text-align: center;
 }
 
-/* Auto-calculated fruit set cell */
+/* Fruit set cell — shared background for both measured and forecast states */
 .fruit-set-auto-cell {
   background: var(--gray-50);
   text-align: center;
@@ -609,6 +651,32 @@ table tr.inactive td {
 .fruit-set-auto-empty {
   font-size: 12px;
   color: var(--gray-300);
+}
+
+/* Editable forecast input — shown when no mobile measurement exists for that week */
+.calc-table input.fruit-set-forecast-input {
+  width: 70px;
+  padding: 3px 6px;
+  font-size: 12px;
+  border: 1px solid var(--gray-200);
+  border-radius: 4px;
+  text-align: right;
+  background: transparent;
+  color: var(--gray-500);
+  font-style: italic;
+}
+
+.calc-table input.fruit-set-forecast-input:focus {
+  outline: none;
+  border-color: var(--green-400);
+  background: var(--white);
+  font-style: normal;
+  color: var(--gray-700);
+}
+
+.calc-table input.fruit-set-forecast-input:not(:placeholder-shown) {
+  color: var(--gray-700);
+  font-style: normal;
 }
 
 /* Scrollable calculator table container — bounded height so only rows scroll */
@@ -641,6 +709,32 @@ table tr.inactive td {
 .calc-table input[type="number"]:focus {
   outline: none;
   border-color: var(--green-600);
+}
+
+/* Fill-down handle — appears in bottom-right of focused calc-table cell */
+.fill-handle {
+  position: absolute;
+  right: 3px;
+  bottom: 3px;
+  width: 7px;
+  height: 7px;
+  background: var(--green-600);
+  border: 1.5px solid var(--white);
+  border-radius: 1px;
+  cursor: crosshair;
+  z-index: 5;
+}
+
+.fill-handle:hover {
+  background: var(--green-700);
+  transform: scale(1.25);
+}
+
+/* Cell highlight during an active fill-down drag */
+.calc-table input.fill-drag-highlight {
+  background: var(--green-50);
+  border-color: var(--green-500);
+  box-shadow: 0 0 0 1px var(--green-400);
 }
 
 @media (max-width: 900px) {

@@ -83,8 +83,20 @@ export function CalculatorPage() {
   const [saveMsg, setSaveMsg] = useState('');
   const [error, setError] = useState('');
   const [loadKey, setLoadKey] = useState(0);
+  // Row indices (0-based) that have real mobile-measured fruit set — these cells are read-only
+  const [measuredWeeks, setMeasuredWeeks] = useState<Set<number>>(new Set());
 
   const currentWeekRowRef = useRef<HTMLTableRowElement>(null);
+
+  // Fill-down drag state
+  const [fillDrag, setFillDrag] = useState<{
+    col: keyof RowDraft;
+    srcRowIdx: number;
+    curRowIdx: number;
+  } | null>(null);
+  const [activeCell, setActiveCell] = useState<{ rowIdx: number; col: keyof RowDraft } | null>(null);
+  const fillDragRef = useRef(fillDrag);
+  fillDragRef.current = fillDrag;
 
   useEffect(() => {
     yearsApi.list().then(data => {
@@ -121,16 +133,16 @@ export function CalculatorPage() {
         const idx = p.set_week_number - 1;
         if (idx >= 0 && idx < 52) base[idx] = profileToRow(p);
       }
-      // Overlay calculated fruit-set values from mobile measurements (always wins)
+      // Overlay mobile-measured fruit-set values (only when > 0; never wipe manual forecasts)
+      const newMeasuredWeeks = new Set<number>();
       for (const fs of fruitSetData) {
         const idx = fs.weekNumber - 1;
-        if (idx >= 0 && idx < 52) {
-          base[idx] = {
-            ...base[idx],
-            avg_fruit_set: fs.fruitSetPerM2 > 0 ? fs.fruitSetPerM2.toFixed(2) : '',
-          };
+        if (idx >= 0 && idx < 52 && fs.fruitSetPerM2 > 0) {
+          newMeasuredWeeks.add(idx);
+          base[idx] = { ...base[idx], avg_fruit_set: fs.fruitSetPerM2.toFixed(2) };
         }
       }
+      setMeasuredWeeks(newMeasuredWeeks);
       // Merge saved fruit weights
       for (const w of weights) {
         const idx = (w as { week_number: number }).week_number - 1;
@@ -148,6 +160,56 @@ export function CalculatorPage() {
   }, [selectedVariety, selectedYear]);
 
   useEffect(() => { loadData(); }, [loadData]);
+
+  // Global mouse listeners for fill-down drag — attached only while a drag is active
+  const isDragging = fillDrag !== null;
+  useEffect(() => {
+    if (!isDragging) return;
+
+    function handleMouseMove(e: MouseEvent) {
+      const el = document.elementFromPoint(e.clientX, e.clientY);
+      const tr = el?.closest('[data-row-idx]');
+      if (tr instanceof HTMLElement && tr.dataset.rowIdx !== undefined) {
+        const idx = parseInt(tr.dataset.rowIdx, 10);
+        if (!isNaN(idx)) {
+          setFillDrag(prev => prev && idx > prev.srcRowIdx ? { ...prev, curRowIdx: idx } : prev);
+        }
+      }
+    }
+
+    function handleMouseUp() {
+      const drag = fillDragRef.current;
+      if (drag && drag.curRowIdx > drag.srcRowIdx) {
+        setRows(prev => {
+          const srcValue = prev[drag.srcRowIdx][drag.col] as string;
+          const next = [...prev];
+          for (let i = drag.srcRowIdx + 1; i <= drag.curRowIdx; i++) {
+            next[i] = { ...next[i], [drag.col]: srcValue };
+          }
+          return next;
+        });
+      }
+      setFillDrag(null);
+    }
+
+    document.addEventListener('mousemove', handleMouseMove);
+    document.addEventListener('mouseup', handleMouseUp);
+    return () => {
+      document.removeEventListener('mousemove', handleMouseMove);
+      document.removeEventListener('mouseup', handleMouseUp);
+    };
+  }, [isDragging]);
+
+  // Crosshair cursor + no text-selection while dragging
+  useEffect(() => {
+    if (!isDragging) return;
+    document.body.style.cursor = 'crosshair';
+    document.body.style.userSelect = 'none';
+    return () => {
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+    };
+  }, [isDragging]);
 
   // After each load completes, scroll the current week row into the centre of
   // the visible table area — but only when viewing the current calendar year.
@@ -264,9 +326,8 @@ export function CalculatorPage() {
                   <thead>
                     <tr>
                       <th>Wk</th>
-                      <th className="calculator-fruit-set-col" title="Auto-calculated from mobile measurements">
+                      <th className="calculator-fruit-set-col" title="Mobile-measured where available. Enter a forecast for future weeks — mobile data will override it when it arrives.">
                         Fruit Set / m²
-                        <br /><span style={{ fontWeight: 400, color: 'var(--gray-400)', fontSize: 10 }}>auto</span>
                       </th>
                       <th>+4%</th>
                       <th>+5%</th>
@@ -295,28 +356,65 @@ export function CalculatorPage() {
                           key={row.set_week_number}
                           ref={isCurrentWeek ? currentWeekRowRef : null}
                           className={isCurrentWeek ? 'calc-row-current-week' : undefined}
+                          data-row-idx={i}
                         >
                           <td style={{ fontWeight: 600, color: 'var(--gray-500)', whiteSpace: 'nowrap' }}>{i + 1}</td>
                           <td className="fruit-set-auto-cell calculator-fruit-set-col">
-                            {row.avg_fruit_set
-                              ? <span className="fruit-set-auto-value">{Number(row.avg_fruit_set).toFixed(2)}</span>
-                              : <span className="fruit-set-auto-empty">—</span>}
-                          </td>
-                          {WEEK_COLS.map(col => (
-                            <td key={col}>
+                            {measuredWeeks.has(i) ? (
+                              // Read-only: value comes from mobile measurements
+                              row.avg_fruit_set
+                                ? <span className="fruit-set-auto-value" title="Measured — from mobile">
+                                    {Number(row.avg_fruit_set).toFixed(2)}
+                                  </span>
+                                : <span className="fruit-set-auto-empty">—</span>
+                            ) : (
+                              // Editable: manual forecast for weeks without mobile data
                               <input
                                 type="number"
                                 min="0"
-                                max="100"
-                                step="1"
-                                value={row[col] as string}
-                                placeholder="0"
-                                onChange={e => updateCell(i, col, e.target.value)}
+                                step="0.01"
+                                value={row.avg_fruit_set}
+                                placeholder="—"
+                                onChange={e => updateCell(i, 'avg_fruit_set', e.target.value)}
+                                className="fruit-set-forecast-input"
+                                title="Enter a forecast — mobile measurements will override this when available"
                               />
-                            </td>
-                          ))}
+                            )}
+                          </td>
+                          {WEEK_COLS.map(col => {
+                            const showHandle =
+                              (activeCell?.rowIdx === i && activeCell?.col === col) ||
+                              (fillDrag?.srcRowIdx === i && fillDrag?.col === col);
+                            const inRange = fillDrag != null && fillDrag.col === col &&
+                              i > fillDrag.srcRowIdx && i <= fillDrag.curRowIdx;
+                            return (
+                              <td key={col} style={{ position: 'relative' }}>
+                                <input
+                                  type="number"
+                                  min="0"
+                                  max="100"
+                                  step="1"
+                                  value={row[col] as string}
+                                  placeholder="0"
+                                  onChange={e => updateCell(i, col, e.target.value)}
+                                  onFocus={() => setActiveCell({ rowIdx: i, col })}
+                                  onBlur={() => setActiveCell(null)}
+                                  className={inRange ? 'fill-drag-highlight' : undefined}
+                                />
+                                {showHandle && (
+                                  <div
+                                    className="fill-handle"
+                                    onMouseDown={e => {
+                                      e.preventDefault();
+                                      setFillDrag({ col, srcRowIdx: i, curRowIdx: i });
+                                    }}
+                                  />
+                                )}
+                              </td>
+                            );
+                          })}
                           <td className={checkClass}>{checkLabel || '—'}</td>
-                          <td className="calc-afw-col">
+                          <td className="calc-afw-col" style={{ position: 'relative' }}>
                             <input
                               type="number"
                               min="0"
@@ -324,7 +422,24 @@ export function CalculatorPage() {
                               value={row.weight_grams}
                               placeholder="0"
                               onChange={e => updateCell(i, 'weight_grams', e.target.value)}
+                              onFocus={() => setActiveCell({ rowIdx: i, col: 'weight_grams' })}
+                              onBlur={() => setActiveCell(null)}
+                              className={
+                                fillDrag?.col === 'weight_grams' && i > fillDrag.srcRowIdx && i <= fillDrag.curRowIdx
+                                  ? 'fill-drag-highlight'
+                                  : undefined
+                              }
                             />
+                            {((activeCell?.rowIdx === i && activeCell?.col === 'weight_grams') ||
+                              (fillDrag?.srcRowIdx === i && fillDrag?.col === 'weight_grams')) && (
+                              <div
+                                className="fill-handle"
+                                onMouseDown={e => {
+                                  e.preventDefault();
+                                  setFillDrag({ col: 'weight_grams', srcRowIdx: i, curRowIdx: i });
+                                }}
+                              />
+                            )}
                           </td>
                         </tr>
                       );

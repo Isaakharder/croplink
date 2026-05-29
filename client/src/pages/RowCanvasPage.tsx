@@ -290,7 +290,6 @@ export function RowCanvasPage() {
     }
   }
 
-<<<<<<< HEAD
   async function handleCancelStatusPicker() {
     if (!statusPickerCtx) return;
     if (statusPickerCtx.isNew) {
@@ -302,7 +301,8 @@ export function RowCanvasPage() {
       try { await nodesApi.setActive(node.id, false); } catch { /* best effort */ }
     }
     setStatusPickerCtx(null);
-=======
+  }
+
   async function handlePickerNodeSwitch(nodeNum: number) {
     if (!statusPickerCtx || saving) return;
     const stem = statusPickerCtx.stem;
@@ -331,7 +331,6 @@ export function RowCanvasPage() {
     } finally {
       setSaving(false);
     }
->>>>>>> 9534d89 (Add node number selector to mobile status picker)
   }
 
   // ── Derived values for the active stem ──────────────────────────────

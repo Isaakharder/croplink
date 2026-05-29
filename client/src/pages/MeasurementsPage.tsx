@@ -66,6 +66,7 @@ export function MeasurementsPage() {
   const [selectedWeek, setSelectedWeek] = useState(() => getIsoWeek(new Date()));
   const [summaryData, setSummaryData] = useState<MeasurementSummaryResponse>(EMPTY_SUMMARY);
   const [loadingSummary, setLoadingSummary] = useState(false);
+  const [collapsedRows, setCollapsedRows] = useState<Record<string, boolean>>({});
 
   useEffect(() => {
     yearsApi.list().then(data => {
@@ -102,6 +103,48 @@ export function MeasurementsPage() {
     () => rows,
     [rows]
   );
+  const rowGroups = useMemo(() => {
+    const groups = new Map<string, {
+      rowId: string;
+      rowName: string;
+      records: typeof visibleRows;
+      stemCount: number;
+      recordedCount: number;
+    }>();
+
+    for (const record of visibleRows) {
+      const existing = groups.get(record.rowId);
+      if (existing) {
+        existing.records.push(record);
+        continue;
+      }
+
+      groups.set(record.rowId, {
+        rowId: record.rowId,
+        rowName: record.rowName,
+        records: [record],
+        stemCount: 0,
+        recordedCount: 0,
+      });
+    }
+
+    return Array.from(groups.values()).map(group => ({
+      ...group,
+      stemCount: new Set(group.records.map(record => record.stemId)).size,
+      recordedCount: group.records.filter(record => record.status !== 'Not Recorded').length,
+    }));
+  }, [visibleRows]);
+
+  useEffect(() => {
+    setCollapsedRows(Object.fromEntries(rowGroups.map(group => [group.rowId, true])));
+  }, [rowGroups]);
+
+  function toggleRow(rowId: string) {
+    setCollapsedRows(prev => ({
+      ...prev,
+      [rowId]: !prev[rowId],
+    }));
+  }
 
   return (
     <>
@@ -159,21 +202,41 @@ export function MeasurementsPage() {
                         <th>Status</th>
                       </tr>
                     </thead>
-                    <tbody>
-                      {visibleRows.map((record, index) => {
-                        const prev = index > 0 ? visibleRows[index - 1] : null;
-                        const showRow = !prev || prev.rowId !== record.rowId;
-                        const showStem = !prev || prev.stemId !== record.stemId;
-                        return (
-                          <tr key={record.nodeId} className={!record.isActive ? 'inactive' : ''}>
-                            <td>{showRow ? record.rowName : ''}</td>
-                            <td>{showStem ? record.stemName : ''}</td>
-                            <td>Node {record.nodeNumber}</td>
-                            <td className={record.status === 'Not Recorded' ? '' : statusClass(record.status)}>{statusLabel(record.status)}</td>
+                    {rowGroups.map(group => {
+                      const isCollapsed = collapsedRows[group.rowId] ?? true;
+                      const rowLabel = /^row\s/i.test(group.rowName) ? group.rowName : `Row ${group.rowName}`;
+
+                      return (
+                        <tbody key={group.rowId}>
+                          <tr className="report-group__header-row">
+                            <td colSpan={4}>
+                              <button
+                                type="button"
+                                className="report-group__toggle"
+                                aria-expanded={!isCollapsed}
+                                onClick={() => toggleRow(group.rowId)}
+                              >
+                                <span className="report-group__indicator" aria-hidden="true">{isCollapsed ? '+' : '-'}</span>
+                                <span className="report-group__summary">{rowLabel} - {group.stemCount} stems / {group.recordedCount} recorded</span>
+                              </button>
+                            </td>
                           </tr>
-                        );
-                      })}
-                    </tbody>
+                          {!isCollapsed && group.records.map((record, index) => {
+                            const prev = index > 0 ? group.records[index - 1] : null;
+                            const showRow = index === 0;
+                            const showStem = !prev || prev.stemId !== record.stemId;
+                            return (
+                              <tr key={record.nodeId} className={!record.isActive ? 'inactive' : ''}>
+                                <td>{showRow ? rowLabel : ''}</td>
+                                <td>{showStem ? record.stemName : ''}</td>
+                                <td>Node {record.nodeNumber}</td>
+                                <td className={record.status === 'Not Recorded' ? '' : statusClass(record.status)}>{statusLabel(record.status)}</td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      );
+                    })}
                   </table>
                 </div>
               )}
