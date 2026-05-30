@@ -8,7 +8,7 @@ const DB_NAME = 'croplink-offline';
 const DB_VERSION = 1;
 const QUEUE_STORE = 'queue';
 const TEMP_IDS_STORE = 'tempIds';
-const API_BASE = '/api/projection';
+const API_BASE = `${import.meta.env.VITE_API_URL ?? ''}/api/projection`;
 
 export type ActionType = 'create_row' | 'create_stem' | 'create_node' | 'upsert_status';
 
