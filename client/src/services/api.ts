@@ -19,8 +19,9 @@ import type {
   PlantNode,
   WeeklyNodeStatus,
 } from '../types';
+import { apiUrl } from './apiBase';
 
-const BASE = `${import.meta.env.VITE_API_URL ?? ''}/api/projection`;
+const BASE = apiUrl('/api/projection');
 
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
   const res = await fetch(`${BASE}${path}`, {

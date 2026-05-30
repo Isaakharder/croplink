@@ -17,7 +17,10 @@
       "Bash(git add *)",
       "Bash(git push *)",
       "Bash(Get-ChildItem -Path \"c:\\\\CropLink\" -Recurse -Name -Include \"*.ts\", \"*.js\", \"*.sql\")",
-      "Bash(Select-Object -First 50)"
+      "Bash(Select-Object -First 50)",
+      "Bash(git commit -m ' *)",
+      "Bash(git pull *)",
+      "Bash(git stash *)"
     ]
   }
 }
