@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
-import { MeasurementStem, NodeStatus, PlantNode, WeeklyNodeStatus } from '../types';
-import { nodesApi, stemsApi, weeklyStatusesApi, yearsApi } from '../services/api';
+import { MeasurementStem, NodeStatus, PlantNode, StemGrowthMeasurement, WeeklyNodeStatus } from '../types';
+import { nodesApi, stemGrowthApi, stemsApi, weeklyStatusesApi, yearsApi } from '../services/api';
 import { OfflineBanner } from '../components/OfflineBanner';
 import { onRemap } from '../services/optimisticStore';
 import { getIsoWeek } from '../utils/years';
@@ -109,6 +109,13 @@ export function RowCanvasPage() {
   const [saving,   setSaving]   = useState(false);
   const [message,  setMessage]  = useState('');
 
+  const [growthByStem, setGrowthByStem] = useState<Record<string, StemGrowthMeasurement | null>>({});
+  const [vegModal,     setVegModal]     = useState(false);
+  const [vegGrowthCm,  setVegGrowthCm]  = useState('');
+  const [vegNotes,     setVegNotes]     = useState('');
+  const [vegSaving,    setVegSaving]    = useState(false);
+  const [vegError,     setVegError]     = useState('');
+
   const canvasRef = useRef<HTMLDivElement>(null);
 
   const safeIndex  = stems.length === 0 ? 0 : Math.min(activeStemIndex, stems.length - 1);
@@ -177,9 +184,10 @@ export function RowCanvasPage() {
   }, [rowId, navigate, location.state]);
 
   async function loadStemData(stemId: string) {
-    const [nodes, statuses] = await Promise.all([
+    const [nodes, statuses, growth] = await Promise.all([
       nodesApi.list(stemId),
       weeklyStatusesApi.list(stemId, currentYear, currentWeek),
+      stemGrowthApi.get(stemId, currentYear, currentWeek),
     ]);
     setNodesByStem(prev => ({
       ...prev,
@@ -188,6 +196,7 @@ export function RowCanvasPage() {
         .sort((a, b) => a.sort_order - b.sort_order || a.node_number - b.node_number),
     }));
     setStatusesByStem(prev => ({ ...prev, [stemId]: statuses }));
+    setGrowthByStem(prev => ({ ...prev, [stemId]: growth }));
   }
 
   async function handleAddStem(name: string) {
@@ -301,6 +310,43 @@ export function RowCanvasPage() {
       try { await nodesApi.setActive(node.id, false); } catch { /* best effort */ }
     }
     setStatusPickerCtx(null);
+  }
+
+  function openVegModal() {
+    const existing = activeStem ? growthByStem[activeStem.id] : null;
+    setVegGrowthCm(existing ? String(existing.growth_cm) : '');
+    setVegNotes(existing?.notes ?? '');
+    setVegError('');
+    setVegModal(true);
+  }
+
+  async function handleSaveVeg(e: React.FormEvent) {
+    e.preventDefault();
+    if (!activeStem || !seasonId) return;
+    const cm = parseFloat(vegGrowthCm);
+    if (!vegGrowthCm.trim() || isNaN(cm) || cm <= 0) {
+      setVegError('Enter a valid growth in cm (must be > 0)');
+      return;
+    }
+    setVegSaving(true);
+    setVegError('');
+    try {
+      const saved = await stemGrowthApi.upsert({
+        stemId: activeStem.id,
+        seasonId,
+        year: currentYear,
+        weekNumber: currentWeek,
+        growthCm: cm,
+        notes: vegNotes.trim() || null,
+      });
+      setGrowthByStem(prev => ({ ...prev, [activeStem.id]: saved }));
+      setMessage(`Growth: ${saved.growth_cm} cm saved`);
+      setVegModal(false);
+    } catch (err: unknown) {
+      setVegError(err instanceof Error ? err.message : 'Save failed');
+    } finally {
+      setVegSaving(false);
+    }
   }
 
   async function handlePickerNodeSwitch(nodeNum: number) {
@@ -434,12 +480,25 @@ export function RowCanvasPage() {
           <div className="stem-single">
 
             {/* Growing tip — always at the top */}
-            <button
-              className="stem-add-node-btn"
-              onClick={() => { handleAddNode(activeStem!, mainNodes.length + 1 || 1); }}
-            >
-              + Node
-            </button>
+            <div className="stem-tip-actions">
+              <button
+                className="stem-add-node-btn"
+                onClick={() => { handleAddNode(activeStem!, mainNodes.length + 1 || 1); }}
+              >
+                + Node
+              </button>
+              <button
+                className="stem-veg-btn"
+                onClick={openVegModal}
+              >
+                + Veg
+              </button>
+            </div>
+            {activeStem && growthByStem[activeStem.id] != null && (
+              <div className="stem-growth-chip">
+                &#8593; {growthByStem[activeStem.id]!.growth_cm} cm
+              </div>
+            )}
 
             {/*
              * column-reverse: first DOM child (N1) sits at the BOTTOM;
@@ -583,6 +642,53 @@ export function RowCanvasPage() {
                 Add / Open
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Veg growth modal ── */}
+      {vegModal && (
+        <div className="modal-overlay" onClick={() => setVegModal(false)}>
+          <div className="modal" style={{ maxWidth: 380 }} onClick={e => e.stopPropagation()}>
+            <div className="modal-title">
+              Vegetative Growth
+              {activeStem && (
+                <span style={{ fontWeight: 400, color: 'var(--gray-500)', marginLeft: 8 }}>
+                  {activeStem.stem_name}
+                </span>
+              )}
+            </div>
+            {vegError && <div className="alert alert-error">{vegError}</div>}
+            <form onSubmit={handleSaveVeg}>
+              <div className="form-group">
+                <label className="form-label">Growth (cm)</label>
+                <input
+                  className="form-control mobile-control"
+                  type="number"
+                  step="0.1"
+                  min="0.1"
+                  placeholder="e.g. 8.5"
+                  value={vegGrowthCm}
+                  onChange={e => setVegGrowthCm(e.target.value)}
+                  autoFocus
+                />
+              </div>
+              <div className="form-group">
+                <label className="form-label">Notes (optional)</label>
+                <input
+                  className="form-control"
+                  type="text"
+                  value={vegNotes}
+                  onChange={e => setVegNotes(e.target.value)}
+                />
+              </div>
+              <div className="modal-actions">
+                <button type="button" className="btn btn-secondary" onClick={() => setVegModal(false)}>Cancel</button>
+                <button type="submit" className="btn btn-primary" disabled={vegSaving}>
+                  {vegSaving ? 'Saving…' : 'Save'}
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}

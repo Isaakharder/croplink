@@ -303,6 +303,19 @@ export const harvestProjectionsApi = {
     ),
 };
 
+// Stem vegetative growth measurements
+export const stemGrowthApi = {
+  get: (stemId: string, year: number, weekNumber: number) =>
+    request<import('../types').StemGrowthMeasurement | null>(
+      `/stem-growth-measurements?stemId=${stemId}&year=${year}&weekNumber=${weekNumber}`
+    ),
+  upsert: (data: Record<string, unknown>) =>
+    request<import('../types').StemGrowthMeasurement>('/stem-growth-measurements/upsert', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
+};
+
 // Projection
 export const projectionApi = {
   get: (varietyId: string, year: number) =>

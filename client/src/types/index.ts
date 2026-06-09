@@ -232,6 +232,21 @@ export interface HarvestProjectionsResult {
   colorTotals: Record<string, number>;
 }
 
+export interface StemGrowthMeasurement {
+  id: string;
+  organization_id?: string | null;
+  variety_id: string;
+  season_id?: string | null;
+  year: number;
+  week_number: number;
+  measurement_row_id: string;
+  measurement_stem_id: string;
+  growth_cm: number;
+  notes?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface MeasurementSummaryResponse {
   summary: {
     totalMeasuredRows: number;

@@ -1512,6 +1512,47 @@ table tr.report-group__header-row:hover td {
   border-color: var(--green-700);
 }
 
+/* Tip action row: + Node and + Veg side by side */
+.stem-tip-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: center;
+  margin-bottom: 10px;
+}
+.stem-tip-actions .stem-add-node-btn {
+  margin-bottom: 0;
+}
+
+/* "+ Veg" button — vegetative growth entry */
+.stem-veg-btn {
+  font-size: 12px;
+  font-weight: 700;
+  padding: 6px 12px;
+  border: 2px dashed var(--blue-500);
+  border-radius: 8px;
+  background: #eff6ff;
+  color: #1d4ed8;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.stem-veg-btn:hover {
+  background: var(--blue-100);
+  border-color: #1d4ed8;
+}
+
+/* Growth reading chip displayed above the stem nodes */
+.stem-growth-chip {
+  align-self: center;
+  margin-bottom: 8px;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 3px 10px;
+  border-radius: 12px;
+  background: #eff6ff;
+  color: #1d4ed8;
+  border: 1px solid #bfdbfe;
+}
+
 /* ── Status picker grid ──────────────────────────────────────────────── */
 
 .status-picker-grid {

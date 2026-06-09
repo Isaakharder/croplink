@@ -20,7 +20,9 @@
       "Bash(Select-Object -First 50)",
       "Bash(git commit -m ' *)",
       "Bash(git pull *)",
-      "Bash(git stash *)"
+      "Bash(git stash *)",
+      "Bash(Get-ChildItem -Path \"C:\\\\CropLink\" -Recurse -Directory)",
+      "Bash(Select-Object -First 30)"
     ]
   }
 }

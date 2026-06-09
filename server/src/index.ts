@@ -20,6 +20,7 @@ import fruitSetByWeekRouter from './routes/fruitSetByWeek';
 import harvestProjectionsRouter from './routes/harvestProjections';
 import ripeningActualsRouter from './routes/ripeningActuals';
 import breakerLearningRouter from './routes/breakerLearning';
+import stemGrowthMeasurementsRouter from './routes/stemGrowthMeasurements';
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -47,6 +48,7 @@ app.use(`${api}/fruit-set-by-week`, fruitSetByWeekRouter);
 app.use(`${api}/harvest-projections`, harvestProjectionsRouter);
 app.use(`${api}/ripening-actuals`, ripeningActualsRouter);
 app.use(`${api}/breaker-learning`, breakerLearningRouter);
+app.use(`${api}/stem-growth-measurements`, stemGrowthMeasurementsRouter);
 
 // Serve static files from client build in production
 if (process.env.NODE_ENV === 'production') {
