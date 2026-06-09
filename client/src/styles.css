@@ -381,6 +381,7 @@ table tr.report-group__header-row:hover td {
 .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
 .grid-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 16px; }
 .grid-4 { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; }
+.grid-7 { display: grid; grid-template-columns: repeat(7, minmax(120px, 1fr)); gap: 10px; }
 
 /* Flex helpers */
 .flex { display: flex; }
@@ -407,6 +408,62 @@ table tr.report-group__header-row:hover td {
 .status-missing { color: #6b7280; }
 .status-empty { color: #6b7280; }
 .status-legacy { color: #6b7280; }
+
+/* Node status greenhouse grid */
+.node-grid-wrap {
+  overflow-x: auto;
+  padding: 12px 16px;
+}
+
+.node-grid {
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.node-grid th,
+.node-grid td {
+  border: 1px solid var(--gray-200);
+  padding: 4px 8px;
+  white-space: nowrap;
+  text-align: center;
+}
+
+.node-grid thead th {
+  background: var(--gray-50);
+  font-weight: 600;
+  color: var(--gray-600);
+}
+
+.node-grid__node-col {
+  position: sticky;
+  left: 0;
+  background: var(--gray-50);
+  z-index: 1;
+  font-weight: 600;
+  color: var(--gray-600);
+  min-width: 52px;
+}
+
+.node-grid__stem-col {
+  min-width: 84px;
+}
+
+.node-grid__cell {
+  font-size: 11px;
+  font-weight: 500;
+}
+
+.node-grid__cell--empty {
+  color: var(--gray-300);
+}
+
+.node-grid__cell.status-flower     { background: #fdf2f8; }
+.node-grid__cell.status-setfruit   { background: #f5f3ff; }
+.node-grid__cell.status-maturegreen { background: #f0fdf4; }
+.node-grid__cell.status-breakerfruit { background: #fff7ed; }
+.node-grid__cell.status-harvested  { background: #eff6ff; }
+.node-grid__cell.status-pruned     { background: var(--gray-50); }
+.node-grid__cell.status-aborted    { background: #fef2f2; }
 
 /* Stat cards */
 .stat-card {
@@ -436,6 +493,19 @@ table tr.report-group__header-row:hover td {
   font-size: 12px;
   color: var(--gray-400);
   margin-top: 4px;
+}
+
+.grid-7 .stat-card {
+  padding: 10px 12px;
+}
+
+.grid-7 .stat-card .stat-label {
+  font-size: 10px;
+}
+
+.grid-7 .stat-card .stat-value {
+  font-size: 18px;
+  margin-top: 2px;
 }
 
 /* Alert */
@@ -743,6 +813,9 @@ table tr.report-group__header-row:hover td {
   }
   .grid-4 {
     grid-template-columns: 1fr 1fr;
+  }
+  .grid-7 {
+    grid-template-columns: repeat(4, 1fr);
   }
   .sidebar {
     width: 56px;

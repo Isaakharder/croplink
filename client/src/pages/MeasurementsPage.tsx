@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { MeasurementSummaryResponse, Season, Variety } from '../types';
+import { MeasurementSummaryRecord, MeasurementSummaryResponse, Season, Variety } from '../types';
 import { measurementSummaryApi, varietiesApi, yearsApi } from '../services/api';
 import { defaultYear, getIsoWeek, isoWeeksInYear, uniqueYears, yearNumbers } from '../utils/years';
 
@@ -56,6 +56,66 @@ function statusLabel(status: string): string {
   if (status === 'Missing') return 'Legacy: Missing';
   if (status === 'Empty') return 'Legacy: Empty';
   return status;
+}
+
+function NodeStatusGrid({ records }: { records: MeasurementSummaryRecord[] }) {
+  const stems = useMemo(() => {
+    const map = new Map<string, { stemId: string; stemName: string; num: number }>();
+    for (const r of records) {
+      if (!map.has(r.stemId)) {
+        const num = parseInt(r.stemName.replace(/\D+/g, ''), 10) || 0;
+        map.set(r.stemId, { stemId: r.stemId, stemName: r.stemName, num });
+      }
+    }
+    return Array.from(map.values()).sort((a, b) => a.num - b.num);
+  }, [records]);
+
+  const nodeNumbers = useMemo(() => {
+    const nums = new Set(records.map(r => r.nodeNumber));
+    return Array.from(nums).sort((a, b) => b - a);
+  }, [records]);
+
+  const lookup = useMemo(() => {
+    const map = new Map<string, Map<number, MeasurementSummaryRecord>>();
+    for (const r of records) {
+      if (!map.has(r.stemId)) map.set(r.stemId, new Map());
+      map.get(r.stemId)!.set(r.nodeNumber, r);
+    }
+    return map;
+  }, [records]);
+
+  return (
+    <div className="node-grid-wrap">
+      <table className="node-grid">
+        <thead>
+          <tr>
+            <th className="node-grid__node-col">Node</th>
+            {stems.map(s => (
+              <th key={s.stemId} className="node-grid__stem-col">{s.stemName}</th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {nodeNumbers.map(nodeNum => (
+            <tr key={nodeNum}>
+              <td className="node-grid__node-col">{nodeNum}</td>
+              {stems.map(s => {
+                const record = lookup.get(s.stemId)?.get(nodeNum);
+                if (!record || record.status === 'Not Recorded') {
+                  return <td key={s.stemId} className="node-grid__cell node-grid__cell--empty">—</td>;
+                }
+                return (
+                  <td key={s.stemId} className={`node-grid__cell ${statusClass(record.status)}`}>
+                    {statusLabel(record.status)}
+                  </td>
+                );
+              })}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
 }
 
 export function MeasurementsPage() {
@@ -136,7 +196,7 @@ export function MeasurementsPage() {
   }, [visibleRows]);
 
   useEffect(() => {
-    setCollapsedRows(Object.fromEntries(rowGroups.map(group => [group.rowId, true])));
+    setCollapsedRows(Object.fromEntries(rowGroups.map(group => [group.rowId, false])));
   }, [rowGroups]);
 
   function toggleRow(rowId: string) {
@@ -176,7 +236,7 @@ export function MeasurementsPage() {
           <div className="empty-state">Select a year, variety, and week to view the measurements report.</div>
         ) : (
           <>
-            <div className="grid-4 mb-4">
+            <div className="grid-7 mb-4">
               {PER_M2_CARDS.map(({ key, label }) => (
                 <div key={key} className="stat-card">
                   <div className="stat-label">{label}</div>
@@ -194,16 +254,8 @@ export function MeasurementsPage() {
               ) : (
                 <div className="table-wrap">
                   <table>
-                    <thead>
-                      <tr>
-                        <th>Row</th>
-                        <th>Stem</th>
-                        <th>Node</th>
-                        <th>Status</th>
-                      </tr>
-                    </thead>
                     {rowGroups.map(group => {
-                      const isCollapsed = collapsedRows[group.rowId] ?? true;
+                      const isCollapsed = collapsedRows[group.rowId] ?? false;
                       const rowLabel = /^row\s/i.test(group.rowName) ? group.rowName : `Row ${group.rowName}`;
 
                       return (
@@ -221,19 +273,13 @@ export function MeasurementsPage() {
                               </button>
                             </td>
                           </tr>
-                          {!isCollapsed && group.records.map((record, index) => {
-                            const prev = index > 0 ? group.records[index - 1] : null;
-                            const showRow = index === 0;
-                            const showStem = !prev || prev.stemId !== record.stemId;
-                            return (
-                              <tr key={record.nodeId} className={!record.isActive ? 'inactive' : ''}>
-                                <td>{showRow ? rowLabel : ''}</td>
-                                <td>{showStem ? record.stemName : ''}</td>
-                                <td>Node {record.nodeNumber}</td>
-                                <td className={record.status === 'Not Recorded' ? '' : statusClass(record.status)}>{statusLabel(record.status)}</td>
-                              </tr>
-                            );
-                          })}
+                          {!isCollapsed && (
+                            <tr>
+                              <td colSpan={4} style={{ padding: 0 }}>
+                                <NodeStatusGrid records={group.records} />
+                              </td>
+                            </tr>
+                          )}
                         </tbody>
                       );
                     })}
