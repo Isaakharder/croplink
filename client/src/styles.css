@@ -348,6 +348,17 @@ table tr.report-group__header-row:hover td {
   white-space: nowrap;
 }
 
+.report-groups {
+  display: grid;
+  gap: 10px;
+}
+
+.report-group-card {
+  border: 1px solid var(--gray-200);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
 /* Badges */
 .badge {
   display: inline-block;
@@ -464,6 +475,114 @@ table tr.report-group__header-row:hover td {
 .node-grid__cell.status-harvested  { background: #eff6ff; }
 .node-grid__cell.status-pruned     { background: var(--gray-50); }
 .node-grid__cell.status-aborted    { background: #fef2f2; }
+
+.compact-stem-list {
+  display: grid;
+  gap: 8px;
+  padding: 10px 12px 12px;
+  background: var(--white);
+}
+
+.compact-stem-line {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  border: 1px solid var(--gray-100);
+  border-radius: 8px;
+  padding: 8px 10px;
+  background: #fcfdfd;
+}
+
+.compact-stem-line__name {
+  min-width: 62px;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--gray-700);
+  padding-top: 2px;
+}
+
+.compact-stem-line__nodes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.compact-node-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border-radius: 999px;
+  border: 1px solid transparent;
+  padding: 3px 8px;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1;
+}
+
+.compact-node-pill__node {
+  font-weight: 700;
+  color: var(--gray-700);
+}
+
+.compact-node-pill.status-flower {
+  color: #be185d;
+  background: #fdf2f8;
+  border-color: #fbcfe8;
+}
+
+.compact-node-pill.status-setfruit {
+  color: #6d28d9;
+  background: #f5f3ff;
+  border-color: #ddd6fe;
+}
+
+.compact-node-pill.status-maturegreen {
+  color: #166534;
+  background: #f0fdf4;
+  border-color: #bbf7d0;
+}
+
+.compact-node-pill.status-breakerfruit {
+  color: #c2410c;
+  background: #fff7ed;
+  border-color: #fed7aa;
+}
+
+.compact-node-pill.status-harvested {
+  color: #1e40af;
+  background: #eff6ff;
+  border-color: #bfdbfe;
+}
+
+.compact-node-pill.status-pruned {
+  color: var(--gray-700);
+  background: var(--gray-50);
+  border-color: var(--gray-200);
+}
+
+.compact-node-pill.status-aborted {
+  color: #b91c1c;
+  background: #fef2f2;
+  border-color: #fecaca;
+}
+
+.compact-node-pill.status-legacy,
+.compact-node-pill.status-missing,
+.compact-node-pill.status-empty {
+  color: var(--gray-700);
+  background: var(--gray-100);
+  border-color: var(--gray-200);
+}
+
+@media (max-width: 900px) {
+  .compact-stem-line {
+    flex-direction: column;
+  }
+
+  .compact-stem-line__name {
+    min-width: 0;
+  }
+}
 
 /* Stat cards */
 .stat-card {
