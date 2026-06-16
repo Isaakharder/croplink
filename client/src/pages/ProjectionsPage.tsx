@@ -12,6 +12,7 @@ export function ProjectionsPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [breakerData, setBreakerData] = useState<BreakerLearningResult | null>(null);
+  const [caseKgInput, setCaseKgInput] = useState<string>('');
 
   useEffect(() => {
     yearsApi.list().then((s) => {
@@ -55,7 +56,32 @@ export function ProjectionsPage() {
       .catch(() => setBreakerData(null));
   }, [selectedYear, selectedVarietyId]);
 
+  // Keep the Case kg input in sync with whichever variety is selected
+  useEffect(() => {
+    const variety = varieties.find((v) => v.id === selectedVarietyId);
+    setCaseKgInput(variety?.case_kg != null ? String(variety.case_kg) : '');
+  }, [selectedVarietyId, varieties]);
+
+  async function saveCaseKg() {
+    if (!selectedVarietyId) return;
+    const trimmed = caseKgInput.trim();
+    const parsed = trimmed === '' ? null : Number(trimmed);
+    if (parsed != null && (Number.isNaN(parsed) || parsed < 0)) return;
+    try {
+      const updated = await varietiesApi.update(selectedVarietyId, { case_kg: parsed });
+      setVarieties((prev) => prev.map((v) => (v.id === selectedVarietyId ? { ...v, case_kg: updated.case_kg } : v)));
+    } catch {
+      // leave the input as-is; it will resync from server data on next load
+    }
+  }
+
   const years = useMemo(() => uniqueYears(seasons), [seasons]);
+
+  const caseKgByVariety = useMemo(() => {
+    const map: Record<string, number | null | undefined> = {};
+    for (const v of varieties) map[v.id] = v.case_kg;
+    return map;
+  }, [varieties]);
 
   const activeWeeks = useMemo(() => {
     if (!data) return [];
@@ -100,13 +126,28 @@ export function ProjectionsPage() {
     return Object.keys(data.colorTotals).sort();
   }, [data]);
 
-  const grandTotal = useMemo(() => {
-    if (!data) return 0;
-    return Math.round(data.varietyTotals.reduce((s, v) => s + v.totalKg, 0) * 10) / 10;
-  }, [data]);
-
   function fmt(n: number) {
     return n > 0 ? n.toLocaleString(undefined, { maximumFractionDigits: 0 }) : '—';
+  }
+
+  function casesLabel(kg: number, caseKg: number | null | undefined): string {
+    if (kg <= 0 || !caseKg || caseKg <= 0) return '—';
+    return `${Math.round(kg / caseKg).toLocaleString()} cs`;
+  }
+
+  function totalCasesLabel(byVariety: Record<string, number>): string {
+    if (!data) return '—';
+    let sum = 0;
+    let any = false;
+    for (const v of data.varieties) {
+      const kg = byVariety[v.id] ?? 0;
+      const caseKg = caseKgByVariety[v.id];
+      if (kg > 0 && caseKg && caseKg > 0) {
+        sum += kg / caseKg;
+        any = true;
+      }
+    }
+    return any ? `${Math.round(sum).toLocaleString()} cs` : '—';
   }
 
   return (
@@ -142,6 +183,23 @@ export function ProjectionsPage() {
             <option key={v.id} value={v.id}>{v.name}</option>
           ))}
         </select>
+        <label>Case kg</label>
+        <input
+          type="number"
+          min="0"
+          step="0.1"
+          className="form-control"
+          style={{ width: 100 }}
+          value={caseKgInput}
+          disabled={!selectedVarietyId}
+          placeholder={selectedVarietyId ? '0' : '—'}
+          title={selectedVarietyId ? '' : 'Select a variety to set its case weight'}
+          onChange={(e) => setCaseKgInput(e.target.value)}
+          onBlur={saveCaseKg}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
+          }}
+        />
       </div>
 
       {loading && <div className="loading-state">Loading projections…</div>}
@@ -168,6 +226,7 @@ export function ProjectionsPage() {
                 const nextWeek = currentWeek === 52 ? 1 : currentWeek + 1;
                 const baseKg = data?.weeklyTotals.find(w => w.week === nextWeek)?.byVariety[selectedVarietyId] ?? 0;
                 const adjustedKg = Math.round((baseKg + breakerData.nextWeekBreakerKgEstimate) * 10) / 10;
+                const caseKg = caseKgByVariety[selectedVarietyId];
                 return (
                   <div className="projections-card projections-card--full breaker-card">
                     <div className="breaker-card-header">
@@ -214,7 +273,10 @@ export function ProjectionsPage() {
                         <div className="breaker-section-label">W{nextWeek} estimate</div>
                         <div className="breaker-stat-row">
                           <span>Base projection</span>
-                          <strong>{baseKg > 0 ? baseKg.toLocaleString(undefined, { maximumFractionDigits: 0 }) : '—'} kg</strong>
+                          <strong>
+                            {baseKg > 0 ? baseKg.toLocaleString(undefined, { maximumFractionDigits: 0 }) : '—'} kg
+                            <span className="breaker-cases-sub"> ({casesLabel(baseKg, caseKg)})</span>
+                          </strong>
                         </div>
                         <div className="breaker-stat-row breaker-adjustment-row">
                           <span>+ Breaker adjust</span>
@@ -228,6 +290,7 @@ export function ProjectionsPage() {
                           <span>= Adjusted total</span>
                           <strong className="breaker-total-value">
                             {adjustedKg > 0 ? adjustedKg.toLocaleString(undefined, { maximumFractionDigits: 0 }) : '—'} kg
+                            <span className="breaker-cases-sub"> ({casesLabel(adjustedKg, caseKg)})</span>
                           </strong>
                         </div>
                         {breakerData.missingAfwWarning && (
@@ -240,38 +303,8 @@ export function ProjectionsPage() {
               })()}
 
               {/* Summary cards row */}
-              <div className="projections-summary-row">
-                <div className="projections-card">
-                  <h3 className="projections-card-title">Variety Totals</h3>
-                  <table className="projections-summary-table">
-                    <thead>
-                      <tr>
-                        <th>Variety</th>
-                        <th>Color</th>
-                        <th className="num-cell">Total (kg)</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {data.varietyTotals.map((v) => (
-                        <tr key={v.id}>
-                          <td>{v.name}</td>
-                          <td className="color-cell">{v.color ?? '—'}</td>
-                          <td className="num-cell">{fmt(v.totalKg)}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                    {data.varietyTotals.length > 1 && (
-                      <tfoot>
-                        <tr className="totals-row">
-                          <td colSpan={2}>Total</td>
-                          <td className="num-cell">{fmt(grandTotal)}</td>
-                        </tr>
-                      </tfoot>
-                    )}
-                  </table>
-                </div>
-
-                {colors.length > 1 && (
+              {colors.length > 1 && (
+                <div className="projections-summary-row">
                   <div className="projections-card">
                     <h3 className="projections-card-title">Color Totals</h3>
                     <table className="projections-summary-table">
@@ -291,8 +324,8 @@ export function ProjectionsPage() {
                       </tbody>
                     </table>
                   </div>
-                )}
-              </div>
+                </div>
+              )}
 
               {/* Weekly by variety table */}
               <div className="projections-card projections-card--full">
@@ -319,7 +352,12 @@ export function ProjectionsPage() {
                             const kg = byVariety[v.id] ?? 0;
                             const fruitPerM2 = fruitPerM2Map[v.id]?.[week] ?? 0;
                             if (kg > 0) {
-                              return <td key={v.id} className="num-cell">{fmt(kg)}</td>;
+                              return (
+                                <td key={v.id} className="num-cell">
+                                  {fmt(kg)}
+                                  <div className="proj-cases-sub">{casesLabel(kg, caseKgByVariety[v.id])}</div>
+                                </td>
+                              );
                             } else if (fruitPerM2 > 0) {
                               return (
                                 <td key={v.id} className="num-cell proj-no-afw">
@@ -333,6 +371,7 @@ export function ProjectionsPage() {
                           {data.varieties.length > 1 && (
                             <td className="num-cell proj-total-col">
                               <strong>{fmt(totalKg)}</strong>
+                              <div className="proj-cases-sub">{totalCasesLabel(byVariety)}</div>
                             </td>
                           )}
                         </tr>
@@ -356,7 +395,7 @@ export function ProjectionsPage() {
                         </tr>
                       </thead>
                       <tbody>
-                        {weeklyRows.map(({ week, byColor, totalKg }) => (
+                        {weeklyRows.map(({ week, byColor, byVariety, totalKg }) => (
                           <tr key={week}>
                             <td className="proj-wk-col">W{week}</td>
                             {colors.map((c) => (
@@ -366,6 +405,7 @@ export function ProjectionsPage() {
                             ))}
                             <td className="num-cell proj-total-col">
                               <strong>{fmt(totalKg)}</strong>
+                              <div className="proj-cases-sub">{totalCasesLabel(byVariety)}</div>
                             </td>
                           </tr>
                         ))}

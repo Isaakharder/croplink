@@ -76,13 +76,30 @@ router.get('/', async (req: Request, res: Response, next: NextFunction) => {
       stemByNode[n.id] = n.measurement_stem_id;
     });
 
-    // Weekly statuses for those nodes in the requested year
-    const { data: statuses, error: wsErr } = await supabase
-      .from('weekly_node_statuses')
-      .select('week_number, status, plant_node_id')
-      .in('plant_node_id', nodeIds)
-      .eq('year', Number(year));
-    if (wsErr) throw new Error(wsErr.message);
+    // Weekly statuses for those nodes in the requested year.
+    // Large varieties can have hundreds of nodes, which overflows the URL/header
+    // size limit if passed to a single .in() filter. Batch the lookup instead.
+    const NODE_ID_BATCH_SIZE = 150;
+    const nodeIdBatches: string[][] = [];
+    for (let i = 0; i < nodeIds.length; i += NODE_ID_BATCH_SIZE) {
+      nodeIdBatches.push(nodeIds.slice(i, i + NODE_ID_BATCH_SIZE));
+    }
+
+    const statusBatchResults = await Promise.all(
+      nodeIdBatches.map(batch =>
+        supabase
+          .from('weekly_node_statuses')
+          .select('week_number, status, plant_node_id')
+          .in('plant_node_id', batch)
+          .eq('year', Number(year))
+      )
+    );
+
+    const statuses: { week_number: number; status: string; plant_node_id: string }[] = [];
+    for (const { data, error: wsErr } of statusBatchResults) {
+      if (wsErr) throw new Error(wsErr.message);
+      if (data) statuses.push(...data);
+    }
 
     // Aggregate per week
     const weekMap: Record<number, { setFruitCount: number; measuredStems: Set<string> }> = {};

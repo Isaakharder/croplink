@@ -22,6 +22,7 @@ export interface Variety {
   plant_count?: number | null;
   total_stem_count?: number | null;
   average_fruit_weight_grams?: number | null;
+  case_kg?: number | null;
   is_active: boolean;
   created_at: string;
   updated_at: string;

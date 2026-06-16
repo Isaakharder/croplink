@@ -141,8 +141,9 @@ export function MeasurementsPage() {
       setYears(prev => uniqueYears([season, ...prev]));
     });
     varietiesApi.list(undefined, selectedYear).then(data => {
-      setVarieties(data);
-      setSelectedVariety(prev => (prev && data.some(v => v.id === prev) ? prev : data[0]?.id ?? ''));
+      const active = data.filter(v => v.is_active);
+      setVarieties(active);
+      setSelectedVariety(prev => (prev && active.some(v => v.id === prev) ? prev : active[0]?.id ?? ''));
     });
   }, [selectedYear]);
 

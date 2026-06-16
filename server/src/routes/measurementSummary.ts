@@ -92,15 +92,30 @@ router.get('/', async (req: Request, res: Response, next: NextFunction) => {
     const nodeIds = (nodes ?? []).map(node => node.id);
     const statusByNode = new Map<string, SummaryStatus>();
     if (nodeIds.length > 0) {
-      const { data: statuses, error: statusError } = await supabase
-        .from('weekly_node_statuses')
-        .select('plant_node_id, status')
-        .in('plant_node_id', nodeIds)
-        .eq('year', yearValue)
-        .eq('week_number', weekValue);
-      if (statusError) throw new Error(statusError.message);
-      for (const row of statuses ?? []) {
-        statusByNode.set(row.plant_node_id, row.status as SummaryStatus);
+      // Large varieties can have hundreds of nodes, which overflows the URL/header
+      // size limit if passed to a single .in() filter. Batch the lookup instead.
+      const NODE_ID_BATCH_SIZE = 150;
+      const batches: string[][] = [];
+      for (let i = 0; i < nodeIds.length; i += NODE_ID_BATCH_SIZE) {
+        batches.push(nodeIds.slice(i, i + NODE_ID_BATCH_SIZE));
+      }
+
+      const batchResults = await Promise.all(
+        batches.map(batch =>
+          supabase
+            .from('weekly_node_statuses')
+            .select('plant_node_id, status')
+            .in('plant_node_id', batch)
+            .eq('year', yearValue)
+            .eq('week_number', weekValue)
+        )
+      );
+
+      for (const { data: statuses, error: statusError } of batchResults) {
+        if (statusError) throw new Error(statusError.message);
+        for (const row of statuses ?? []) {
+          statusByNode.set(row.plant_node_id, row.status as SummaryStatus);
+        }
       }
     }
 

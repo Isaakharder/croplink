@@ -1799,6 +1799,19 @@ table tr.report-group__header-row:hover td {
   color: var(--gray-900);
 }
 
+.proj-cases-sub {
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--gray-400);
+  font-variant-numeric: tabular-nums;
+}
+
+.breaker-cases-sub {
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--gray-400);
+}
+
 .proj-color-tag {
   display: inline-block;
   margin-left: 5px;
