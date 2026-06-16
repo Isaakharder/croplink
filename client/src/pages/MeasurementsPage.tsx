@@ -58,7 +58,7 @@ function statusLabel(status: string): string {
   return status;
 }
 
-function NodeStatusGrid({ records }: { records: MeasurementSummaryRecord[] }) {
+function NodeStatusGrid({ records, harvestedLabel = false }: { records: MeasurementSummaryRecord[]; harvestedLabel?: boolean }) {
   const stems = useMemo(() => {
     const map = new Map<string, { stemId: string; stemName: string; num: number }>();
     for (const r of records) {
@@ -101,6 +101,14 @@ function NodeStatusGrid({ records }: { records: MeasurementSummaryRecord[] }) {
               <td className="node-grid__node-col">{nodeNum}</td>
               {stems.map(s => {
                 const record = lookup.get(s.stemId)?.get(nodeNum);
+                // Recently-harvested section: render as Harvested (last week's confirmed status)
+                if (harvestedLabel && record?.recentlyHarvested) {
+                  return (
+                    <td key={s.stemId} className="node-grid__cell status-harvested">
+                      {statusLabel('Harvested')}
+                    </td>
+                  );
+                }
                 if (!record || record.status === 'Not Recorded') {
                   return <td key={s.stemId} className="node-grid__cell node-grid__cell--empty">—</td>;
                 }
@@ -125,8 +133,10 @@ export function MeasurementsPage() {
   const [selectedVariety, setSelectedVariety] = useState('');
   const [selectedWeek, setSelectedWeek] = useState(() => getIsoWeek(new Date()));
   const [summaryData, setSummaryData] = useState<MeasurementSummaryResponse>(EMPTY_SUMMARY);
+  const [summaryError, setSummaryError] = useState<string | null>(null);
   const [loadingSummary, setLoadingSummary] = useState(false);
   const [collapsedRows, setCollapsedRows] = useState<Record<string, boolean>>({});
+  const [expandedHarvested, setExpandedHarvested] = useState<Record<string, boolean>>({});
 
   useEffect(() => {
     yearsApi.list().then(data => {
@@ -150,61 +160,82 @@ export function MeasurementsPage() {
   useEffect(() => {
     if (!selectedYear || !selectedVariety || !selectedWeek) {
       setSummaryData(EMPTY_SUMMARY);
+      setSummaryError(null);
       return;
     }
 
+    setSummaryError(null);
     setLoadingSummary(true);
     measurementSummaryApi.get(selectedYear, selectedVariety, selectedWeek)
-      .then(data => setSummaryData(data))
+      .then(data => {
+        const gridCounts: Record<string, number> = {};
+        for (const r of data.records) {
+          if (r.status !== 'Not Recorded' && !r.recentlyHarvested) {
+            gridCounts[r.status] = (gridCounts[r.status] ?? 0) + 1;
+          }
+        }
+        console.log('[MeasurementsPage] year=%d week=%d visible grid counts:', selectedYear, selectedWeek, gridCounts);
+        console.log('[MeasurementsPage] summary card perM2ByStatus:', data.summary.perM2ByStatus);
+        console.log('[MeasurementsPage] divisor measuredStemCount=%d totalStemCount=%d areaM2=%d',
+          data.summary.measuredStemCount, data.summary.varietyTotalStemCount, data.summary.varietyAreaM2);
+        setSummaryData(data);
+      })
+      .catch((e: Error) => setSummaryError(e.message))
       .finally(() => setLoadingSummary(false));
   }, [selectedYear, selectedVariety, selectedWeek]);
 
-  const rows = summaryData.records;
-  const visibleRows = useMemo(
-    () => rows,
-    [rows]
-  );
+  const allRecords = summaryData.records;
+
+  // A row group holds the records for one measurement row, split by whether they are
+  // active this week or were harvested last week (shown in a collapsed sub-section).
   const rowGroups = useMemo(() => {
     const groups = new Map<string, {
       rowId: string;
       rowName: string;
-      records: typeof visibleRows;
-      stemCount: number;
-      recordedCount: number;
+      mainRecords: MeasurementSummaryRecord[];      // active + plain-dash nodes
+      harvestedRecords: MeasurementSummaryRecord[]; // harvested last week, empty this week
     }>();
 
-    for (const record of visibleRows) {
-      const existing = groups.get(record.rowId);
-      if (existing) {
-        existing.records.push(record);
-        continue;
+    for (const record of allRecords) {
+      if (!groups.has(record.rowId)) {
+        groups.set(record.rowId, {
+          rowId: record.rowId,
+          rowName: record.rowName,
+          mainRecords: [],
+          harvestedRecords: [],
+        });
       }
-
-      groups.set(record.rowId, {
-        rowId: record.rowId,
-        rowName: record.rowName,
-        records: [record],
-        stemCount: 0,
-        recordedCount: 0,
-      });
+      const group = groups.get(record.rowId)!;
+      if (record.recentlyHarvested) {
+        group.harvestedRecords.push(record);
+      } else {
+        group.mainRecords.push(record);
+      }
     }
 
     return Array.from(groups.values()).map(group => ({
       ...group,
-      stemCount: new Set(group.records.map(record => record.stemId)).size,
-      recordedCount: group.records.filter(record => record.status !== 'Not Recorded').length,
+      stemCount: new Set(
+        group.mainRecords.filter(r => r.status !== 'Not Recorded').map(r => r.stemId)
+      ).size,
+      recordedCount: group.mainRecords.filter(r => r.status !== 'Not Recorded').length,
     }));
-  }, [visibleRows]);
+  }, [allRecords]);
+
+  // Any records at all (active or recently harvested) → show the grid, not the empty state
+  const hasContent = allRecords.some(r => r.status !== 'Not Recorded' || r.recentlyHarvested);
 
   useEffect(() => {
-    setCollapsedRows(Object.fromEntries(rowGroups.map(group => [group.rowId, false])));
+    setCollapsedRows(Object.fromEntries(rowGroups.map(g => [g.rowId, false])));
+    setExpandedHarvested({});
   }, [rowGroups]);
 
   function toggleRow(rowId: string) {
-    setCollapsedRows(prev => ({
-      ...prev,
-      [rowId]: !prev[rowId],
-    }));
+    setCollapsedRows(prev => ({ ...prev, [rowId]: !prev[rowId] }));
+  }
+
+  function toggleHarvested(rowId: string) {
+    setExpandedHarvested(prev => ({ ...prev, [rowId]: !prev[rowId] }));
   }
 
   return (
@@ -250,14 +281,18 @@ export function MeasurementsPage() {
               <div className="card-title">Week {selectedWeek} Node Status Report</div>
               {loadingSummary ? (
                 <div className="loading">Loading...</div>
-              ) : visibleRows.length === 0 ? (
+              ) : summaryError ? (
+                <div className="error-state">Failed to load measurement data: {summaryError}</div>
+              ) : !hasContent ? (
                 <div className="empty-state">No row/stem/node structure found for this variety.</div>
               ) : (
                 <div className="table-wrap">
                   <table>
                     {rowGroups.map(group => {
                       const isCollapsed = collapsedRows[group.rowId] ?? false;
+                      const harvestedExpanded = expandedHarvested[group.rowId] ?? false;
                       const rowLabel = /^row\s/i.test(group.rowName) ? group.rowName : `Row ${group.rowName}`;
+                      const harvestedCount = group.harvestedRecords.length;
 
                       return (
                         <tbody key={group.rowId}>
@@ -270,16 +305,41 @@ export function MeasurementsPage() {
                                 onClick={() => toggleRow(group.rowId)}
                               >
                                 <span className="report-group__indicator" aria-hidden="true">{isCollapsed ? '+' : '-'}</span>
-                                <span className="report-group__summary">{rowLabel} - {group.stemCount} stems / {group.recordedCount} recorded</span>
+                                <span className="report-group__summary">
+                                  {rowLabel} — {group.stemCount} stems / {group.recordedCount} recorded
+                                  {harvestedCount > 0 && ` / ${harvestedCount} recently harvested`}
+                                </span>
                               </button>
                             </td>
                           </tr>
                           {!isCollapsed && (
-                            <tr>
-                              <td colSpan={4} style={{ padding: 0 }}>
-                                <NodeStatusGrid records={group.records} />
-                              </td>
-                            </tr>
+                            <>
+                              <tr>
+                                <td colSpan={4} style={{ padding: 0 }}>
+                                  <NodeStatusGrid records={group.mainRecords} />
+                                </td>
+                              </tr>
+                              {harvestedCount > 0 && (
+                                <tr>
+                                  <td colSpan={4} style={{ padding: 0 }}>
+                                    <div className="report-group__sub">
+                                      <button
+                                        type="button"
+                                        className="report-group__toggle report-group__toggle--sub"
+                                        aria-expanded={harvestedExpanded}
+                                        onClick={() => toggleHarvested(group.rowId)}
+                                      >
+                                        <span className="report-group__indicator" aria-hidden="true">{harvestedExpanded ? '−' : '+'}</span>
+                                        <span className="report-group__summary">Harvested last week — {harvestedCount} node{harvestedCount !== 1 ? 's' : ''}</span>
+                                      </button>
+                                      {harvestedExpanded && (
+                                        <NodeStatusGrid records={group.harvestedRecords} harvestedLabel />
+                                      )}
+                                    </div>
+                                  </td>
+                                </tr>
+                              )}
+                            </>
                           )}
                         </tbody>
                       );

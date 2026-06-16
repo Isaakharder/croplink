@@ -158,6 +158,7 @@ export interface MeasurementSummaryRecord {
   nodeId: string;
   nodeNumber: number;
   status: HistoricalNodeStatus | 'Not Recorded';
+  recentlyHarvested: boolean;
   isActive: boolean;
 }
 
@@ -244,6 +245,28 @@ export interface StemGrowthMeasurement {
   measurement_stem_id: string;
   growth_cm: number;
   notes?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface Block {
+  id: string;
+  organization_id?: string | null;
+  name: string;
+  climate_agent_block_key: string;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface BlockClimateSummary {
+  id: string;
+  organization_id?: string | null;
+  block_id: string;
+  measured_at: string;
+  air_temperature_c?: number | null;
+  relative_humidity_pct?: number | null;
+  heating_setpoint_c?: number | null;
   created_at: string;
   updated_at: string;
 }

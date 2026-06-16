@@ -5,6 +5,7 @@ import { MeasurementsPage } from './pages/MeasurementsPage';
 import { CalculatorPage } from './pages/CalculatorPage';
 import { HarvestedPage } from './pages/HarvestedPage';
 import { ProjectionsPage } from './pages/ProjectionsPage';
+import { ClimatePage } from './pages/ClimatePage';
 import { SetupPage } from './pages/SetupPage';
 import { MobileMeasurementsPage } from './pages/MobileMeasurementsPage';
 import { RowCanvasPage } from './pages/RowCanvasPage';
@@ -33,6 +34,7 @@ export default function App() {
             <Route path="/calculator" element={<CalculatorPage />} />
             <Route path="/harvested" element={<HarvestedPage />} />
             <Route path="/projections" element={<ProjectionsPage />} />
+            <Route path="/climate" element={<ClimatePage />} />
             <Route path="/setup" element={<SetupPage />} />
           </Route>
       </Routes>

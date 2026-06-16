@@ -22,9 +22,10 @@ import type {
 import { apiUrl } from './apiBase';
 
 const BASE = apiUrl('/api/projection');
+const CLIMATE_BASE = apiUrl('/api/climate');
 
-async function request<T>(path: string, options?: RequestInit): Promise<T> {
-  const res = await fetch(`${BASE}${path}`, {
+async function requestFrom<T>(base: string, path: string, options?: RequestInit): Promise<T> {
+  const res = await fetch(`${base}${path}`, {
     headers: { 'Content-Type': 'application/json', ...(options?.headers ?? {}) },
     ...options,
   });
@@ -34,6 +35,14 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
   }
   if (res.status === 204) return undefined as T;
   return res.json();
+}
+
+async function request<T>(path: string, options?: RequestInit): Promise<T> {
+  return requestFrom<T>(BASE, path, options);
+}
+
+async function climateRequest<T>(path: string, options?: RequestInit): Promise<T> {
+  return requestFrom<T>(CLIMATE_BASE, path, options);
 }
 
 // Seasons
@@ -314,6 +323,20 @@ export const stemGrowthApi = {
       method: 'POST',
       body: JSON.stringify(data),
     }),
+};
+
+// Blocks (Climate Agent — Block Summary climate data)
+export const blocksApi = {
+  list: () => climateRequest<import('../types').Block[]>('/blocks'),
+};
+
+export const blockClimateSummaryApi = {
+  list: (blockId: string, start?: string, end?: string) => {
+    const params = new URLSearchParams({ blockId });
+    if (start) params.set('start', start);
+    if (end) params.set('end', end);
+    return climateRequest<import('../types').BlockClimateSummary[]>(`/block-summary?${params.toString()}`);
+  },
 };
 
 // Projection

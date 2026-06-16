@@ -1,5 +1,6 @@
 import { Router, Request, Response, NextFunction } from 'express';
 import { supabase } from '../lib/supabase';
+import { chunkArray } from '../lib/chunkArray';
 
 const router = Router();
 
@@ -79,27 +80,19 @@ router.get('/', async (req: Request, res: Response, next: NextFunction) => {
     // Weekly statuses for those nodes in the requested year.
     // Large varieties can have hundreds of nodes, which overflows the URL/header
     // size limit if passed to a single .in() filter. Batch the lookup instead.
-    const NODE_ID_BATCH_SIZE = 150;
-    const nodeIdBatches: string[][] = [];
-    for (let i = 0; i < nodeIds.length; i += NODE_ID_BATCH_SIZE) {
-      nodeIdBatches.push(nodeIds.slice(i, i + NODE_ID_BATCH_SIZE));
-    }
-
     const statusBatchResults = await Promise.all(
-      nodeIdBatches.map(batch =>
+      chunkArray(nodeIds, 100).map(ids =>
         supabase
           .from('weekly_node_statuses')
           .select('week_number, status, plant_node_id')
-          .in('plant_node_id', batch)
+          .in('plant_node_id', ids)
           .eq('year', Number(year))
       )
     );
-
-    const statuses: { week_number: number; status: string; plant_node_id: string }[] = [];
-    for (const { data, error: wsErr } of statusBatchResults) {
+    for (const { error: wsErr } of statusBatchResults) {
       if (wsErr) throw new Error(wsErr.message);
-      if (data) statuses.push(...data);
     }
+    const statuses = statusBatchResults.flatMap(({ data }) => data ?? []);
 
     // Aggregate per week
     const weekMap: Record<number, { setFruitCount: number; measuredStems: Set<string> }> = {};

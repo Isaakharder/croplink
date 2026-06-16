@@ -1,5 +1,6 @@
 import { Router, Request, Response, NextFunction } from 'express';
 import { supabase } from '../lib/supabase';
+import { chunkArray } from '../lib/chunkArray';
 
 const router = Router();
 
@@ -107,14 +108,19 @@ router.get('/', async (req: Request, res: Response, next: NextFunction) => {
         }
 
         if (nodeIds.length > 0) {
-          const { data: statuses } = await supabase
-            .from('weekly_node_statuses')
-            .select('plant_node_id, status')
-            .in('plant_node_id', nodeIds)
-            .eq('year', yearNum)
-            .eq('week_number', queryWeek);
+          const chunkResults = await Promise.all(
+            chunkArray(nodeIds, 100).map(ids =>
+              supabase
+                .from('weekly_node_statuses')
+                .select('plant_node_id, status')
+                .in('plant_node_id', ids)
+                .eq('year', yearNum)
+                .eq('week_number', queryWeek)
+            )
+          );
+          const statuses = chunkResults.flatMap(({ data }) => data ?? []);
 
-          breakerCount = (statuses ?? []).filter(
+          breakerCount = statuses.filter(
             (s: { status: string }) => s.status === 'BreakerFruit'
           ).length;
 
