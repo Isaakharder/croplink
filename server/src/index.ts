@@ -23,6 +23,10 @@ import breakerLearningRouter from './routes/breakerLearning';
 import stemGrowthMeasurementsRouter from './routes/stemGrowthMeasurements';
 import blocksRouter from './routes/blocks';
 import blockClimateSummaryRouter from './routes/blockClimateSummary';
+import climateImportsRouter from './routes/climateImports';
+import phasesRouter from './routes/phases';
+import zonesRouter from './routes/zones';
+import varietyZonesRouter from './routes/varietyZones';
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -55,6 +59,13 @@ app.use(`${api}/stem-growth-measurements`, stemGrowthMeasurementsRouter);
 const climateApi = '/api/climate';
 app.use(`${climateApi}/blocks`, blocksRouter);
 app.use(`${climateApi}/block-summary`, blockClimateSummaryRouter);
+
+app.use('/api/v1/climate/imports', climateImportsRouter);
+
+const setupApi = '/api/setup';
+app.use(`${setupApi}/phases`, phasesRouter);
+app.use(`${setupApi}/zones`, zonesRouter);
+app.use(`${setupApi}/variety-zones`, varietyZonesRouter);
 
 // Serve static files from client build in production
 if (process.env.NODE_ENV === 'production') {

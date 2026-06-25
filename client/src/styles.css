@@ -1497,11 +1497,25 @@ table tr.report-group__header-row:hover td {
 }
 
 .stem-main-zone {
-  width: 42px;
+  width: 54px;
   flex-shrink: 0;
   display: flex;
+  flex-direction: column;
   align-items: center;
-  justify-content: center;
+  gap: 3px;
+}
+
+/* Short status label shown below the main node circle */
+.stem-node-status-label {
+  font-size: 9px;
+  font-weight: 600;
+  color: var(--gray-500);
+  text-align: center;
+  white-space: nowrap;
+  max-width: 54px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  line-height: 1;
 }
 
 /* Small + button to add a side shoot */
@@ -1593,6 +1607,72 @@ table tr.report-group__header-row:hover td {
   font-weight: 400;
 }
 
+/* Flex wrapper: [connector?, …icon-btns, +btn].
+   row-reverse on --left keeps connector adjacent to the main stem on both sides. */
+.shoot-zone {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 4px;
+}
+.shoot-zone--left {
+  flex-direction: row-reverse;
+}
+
+/* Small circular status icon for a single shoot */
+.shoot-icon-btn {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  border: 2px solid var(--gray-300);
+  background: var(--white);
+  color: var(--gray-500);
+  cursor: pointer;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: transform 0.1s;
+  padding: 0;
+  position: relative;
+  z-index: 2;
+}
+.shoot-icon-btn:active {
+  transform: scale(0.88);
+}
+
+/* Column wrapper: shoot circle + short label below */
+.shoot-node-cell {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+}
+
+/* Short status label below a shoot circle */
+.shoot-node-cell-label {
+  font-size: 8px;
+  font-weight: 600;
+  color: var(--gray-500);
+  text-align: center;
+  white-space: nowrap;
+  max-width: 36px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  line-height: 1;
+}
+
+/* "+N" chip when shoots exceed MAX_VISIBLE */
+.shoot-overflow-badge {
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--gray-500);
+  background: var(--gray-100);
+  border-radius: 999px;
+  padding: 1px 5px;
+  flex-shrink: 0;
+}
+
 /* Status badge beside each node */
 .stem-node-badge {
   font-size: 11px;
@@ -1609,6 +1689,14 @@ table tr.report-group__header-row:hover td {
 .stem-node-badge--empty {
   opacity: 0.45;
   font-weight: 400;
+}
+
+/* Badge variant that holds a 22px SVG icon instead of text */
+.stem-node-badge--icon {
+  padding: 3px;
+  border-radius: 6px;
+  line-height: 0;
+  flex-shrink: 0;
 }
 
 /* "+ Node" sits at the TOP of the stem — represents new growth */
@@ -1685,13 +1773,18 @@ table tr.report-group__header-row:hover td {
   border: 1px solid var(--gray-200);
   background: var(--white);
   border-radius: 8px;
-  padding: 12px 6px;
+  padding: 10px 6px;
   font-size: 12px;
   font-weight: 600;
   color: var(--gray-700);
   cursor: pointer;
   text-align: center;
-  min-height: 48px;
+  min-height: 72px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
   transition: border-color 0.1s, background 0.1s;
 }
 

@@ -22,7 +22,9 @@
       "Bash(git pull *)",
       "Bash(git stash *)",
       "Bash(Get-ChildItem -Path \"C:\\\\CropLink\" -Recurse -Directory)",
-      "Bash(Select-Object -First 30)"
+      "Bash(Select-Object -First 30)",
+      "Bash(awk '{print $NF}')",
+      "Bash(grep -v \"^$\")"
     ]
   }
 }

@@ -23,6 +23,7 @@ import { apiUrl } from './apiBase';
 
 const BASE = apiUrl('/api/projection');
 const CLIMATE_BASE = apiUrl('/api/climate');
+const SETUP_BASE = apiUrl('/api/setup');
 
 async function requestFrom<T>(base: string, path: string, options?: RequestInit): Promise<T> {
   const res = await fetch(`${base}${path}`, {
@@ -43,6 +44,16 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
 
 async function climateRequest<T>(path: string, options?: RequestInit): Promise<T> {
   return requestFrom<T>(CLIMATE_BASE, path, options);
+}
+
+async function setupRequest<T>(path: string, options?: RequestInit): Promise<T> {
+  return requestFrom<T>(SETUP_BASE, path, options);
+}
+
+function compareWeeklyStatusRecency(a: WeeklyNodeStatus, b: WeeklyNodeStatus): number {
+  if (a.year !== b.year) return a.year - b.year;
+  if (a.week_number !== b.week_number) return a.week_number - b.week_number;
+  return new Date(a.created_at).getTime() - new Date(b.created_at).getTime();
 }
 
 // Seasons
@@ -190,15 +201,36 @@ export const nodesApi = {
 
 // Weekly statuses
 export const weeklyStatusesApi = {
-  list: async (stemId: string, year: number, weekNumber: number): Promise<WeeklyNodeStatus[]> => {
+  list: async (
+    stemId: string,
+    year: number,
+    weekNumber: number,
+    options?: { seasonId?: string; latestPerNode?: boolean }
+  ): Promise<WeeklyNodeStatus[]> => {
     const optNodes = getNodesForStem(stemId);
     const optStatuses = getStatusesForNodes(optNodes.map(n => n.id), year, weekNumber);
     if (isTempId(stemId)) return optStatuses;
-    const serverStatuses = await request<WeeklyNodeStatus[]>(
-      `/weekly-statuses?stemId=${stemId}&year=${year}&weekNumber=${weekNumber}`
-    );
-    const serverNodeIds = new Set(serverStatuses.map(s => s.plant_node_id));
-    return [...serverStatuses, ...optStatuses.filter(s => !serverNodeIds.has(s.plant_node_id))];
+
+    const params = new URLSearchParams({ stemId });
+    if (options?.latestPerNode) {
+      params.set('latest', 'true');
+      if (options.seasonId) params.set('seasonId', options.seasonId);
+    } else {
+      params.set('year', String(year));
+      params.set('weekNumber', String(weekNumber));
+    }
+
+    const serverStatuses = await request<WeeklyNodeStatus[]>(`/weekly-statuses?${params.toString()}`);
+    const mergedByNode = new Map(serverStatuses.map(status => [status.plant_node_id, status]));
+
+    for (const optimisticStatus of optStatuses) {
+      const existing = mergedByNode.get(optimisticStatus.plant_node_id);
+      if (!existing || compareWeeklyStatusRecency(optimisticStatus, existing) >= 0) {
+        mergedByNode.set(optimisticStatus.plant_node_id, optimisticStatus);
+      }
+    }
+
+    return Array.from(mergedByNode.values());
   },
   upsert: async (data: Record<string, unknown>): Promise<WeeklyNodeStatus> => {
     if (navigator.onLine) {
@@ -323,6 +355,35 @@ export const stemGrowthApi = {
       method: 'POST',
       body: JSON.stringify(data),
     }),
+};
+
+// Phases
+export const phasesApi = {
+  list: () => setupRequest<import('../types').Phase[]>('/phases'),
+  create: (data: { name: string; sort_order?: number }) =>
+    setupRequest<import('../types').Phase>('/phases', { method: 'POST', body: JSON.stringify(data) }),
+  update: (id: string, data: { name?: string; sort_order?: number }) =>
+    setupRequest<import('../types').Phase>(`/phases/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
+  delete: (id: string) => setupRequest<void>(`/phases/${id}`, { method: 'DELETE' }),
+};
+
+// Zones
+export const zonesApi = {
+  list: (phaseId?: string) =>
+    setupRequest<import('../types').Zone[]>(`/zones${phaseId ? `?phaseId=${phaseId}` : ''}`),
+  create: (data: { phase_id: string; name: string; import_key: string; sort_order?: number }) =>
+    setupRequest<import('../types').Zone>('/zones', { method: 'POST', body: JSON.stringify(data) }),
+  update: (id: string, data: { name?: string; import_key?: string; sort_order?: number }) =>
+    setupRequest<import('../types').Zone>(`/zones/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
+  delete: (id: string) => setupRequest<void>(`/zones/${id}`, { method: 'DELETE' }),
+};
+
+// Variety-Zone assignments
+export const varietyZonesApi = {
+  list: () => setupRequest<import('../types').VarietyZone[]>('/variety-zones'),
+  assign: (data: { variety_id: string; zone_id: string }) =>
+    setupRequest<import('../types').VarietyZone>('/variety-zones', { method: 'POST', body: JSON.stringify(data) }),
+  unassign: (zoneId: string) => setupRequest<void>(`/variety-zones/${zoneId}`, { method: 'DELETE' }),
 };
 
 // Blocks (Climate Agent — Block Summary climate data)

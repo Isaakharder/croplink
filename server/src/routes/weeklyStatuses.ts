@@ -3,10 +3,10 @@ import { supabase } from '../lib/supabase';
 
 const router = Router();
 
-// GET /weekly-statuses?stemId=&year=&weekNumber=
+// GET /weekly-statuses?stemId=&year=&weekNumber=&seasonId=&latest=true
 router.get('/', async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const { stemId, year, weekNumber } = req.query;
+    const { stemId, year, weekNumber, seasonId, latest } = req.query;
     if (!stemId) {
       return res.status(400).json({ error: 'stemId is required' });
     }
@@ -27,6 +27,28 @@ router.get('/', async (req: Request, res: Response, next: NextFunction) => {
       .from('weekly_node_statuses')
       .select('*')
       .in('plant_node_id', nodeIds);
+
+    if (latest === 'true') {
+      if (seasonId) query = query.eq('season_id', seasonId as string);
+      query = query
+        .order('plant_node_id', { ascending: true })
+        .order('year', { ascending: false })
+        .order('week_number', { ascending: false })
+        .order('created_at', { ascending: false });
+
+      const { data, error } = await query;
+      if (error) throw new Error(error.message);
+
+      const latestByNode = new Map<string, unknown>();
+      for (const row of data ?? []) {
+        const plantNodeId = (row as { plant_node_id: string }).plant_node_id;
+        if (!latestByNode.has(plantNodeId)) {
+          latestByNode.set(plantNodeId, row);
+        }
+      }
+
+      return res.json(Array.from(latestByNode.values()));
+    }
 
     if (year) query = query.eq('year', Number(year));
     if (weekNumber) query = query.eq('week_number', Number(weekNumber));

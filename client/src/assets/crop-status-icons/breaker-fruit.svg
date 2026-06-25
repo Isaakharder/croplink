@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+  <defs>
+    <clipPath id="bf-left">
+      <rect x="0" y="0" width="16" height="32"/>
+    </clipPath>
+  </defs>
+  <path d="M16 8 Q19.5 4 24 5.5" stroke="#f97316" stroke-width="1.8" stroke-linecap="round" fill="none"/>
+  <circle cx="16" cy="19" r="11" fill="#fff7ed" stroke="#f97316" stroke-width="2"/>
+  <circle cx="16" cy="19" r="11" fill="#fed7aa" clip-path="url(#bf-left)"/>
+</svg>

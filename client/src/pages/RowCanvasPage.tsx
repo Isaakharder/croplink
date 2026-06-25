@@ -6,6 +6,33 @@ import { OfflineBanner } from '../components/OfflineBanner';
 import { onRemap } from '../services/optimisticStore';
 import { getIsoWeek } from '../utils/years';
 
+// Load all crop status icons eagerly; presence in the map determines whether to show an icon.
+const _statusIconModules = import.meta.glob<string>(
+  '../assets/crop-status-icons/*.svg',
+  { eager: true, import: 'default' }
+);
+
+// Explicit mapping from DB status value → SVG filename stem (no lowercasing assumed).
+const STATUS_TO_ICON_FILE: Record<string, string> = {
+  Aborted:      'aborted',
+  Pruned:       'pruned',
+  Flower:       'flower',
+  SetFruit:     'set-fruit',
+  MatureGreen:  'mature-green',
+  BreakerFruit: 'breaker-fruit',
+  Harvested:    'harvested',
+};
+
+function statusToIconFileKey(status: string): string | undefined {
+  return STATUS_TO_ICON_FILE[status];
+}
+
+function getStatusIcon(status: string): string | undefined {
+  const fileKey = statusToIconFileKey(status);
+  if (!fileKey) return undefined;
+  return _statusIconModules[`../assets/crop-status-icons/${fileKey}.svg`] as string | undefined;
+}
+
 const STATUS_OPTIONS: { value: NodeStatus; label: string }[] = [
   { value: 'Aborted',      label: 'Aborted' },
   { value: 'Pruned',       label: 'Pruned' },
@@ -34,6 +61,28 @@ function statusLabel(status: string): string {
   if (status === 'Missing') return 'Legacy: Missing';
   if (status === 'Empty') return 'Legacy: Empty';
   return STATUS_CONFIG[status as NodeStatus]?.label ?? status;
+}
+
+const SHORT_STATUS_LABEL: Record<string, string> = {
+  Aborted:      'Aborted',
+  Pruned:       'Pruned',
+  Flower:       'Flower',
+  SetFruit:     'Set',
+  MatureGreen:  'Mature',
+  BreakerFruit: 'Breaker',
+  Harvested:    'Harvested',
+};
+
+function shortStatusLabel(status: string): string {
+  return SHORT_STATUS_LABEL[status] ?? statusLabel(status);
+}
+
+// Normalise the status string out of a record regardless of which field name the
+// backend used — old records may arrive as status_key, status_type, or crop_status.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function getRecordStatus(rec: any): string | null {
+  if (!rec) return null;
+  return rec.status || rec.status_key || rec.status_type || rec.crop_status || null;
 }
 
 function TextPromptModal({
@@ -126,7 +175,7 @@ export function RowCanvasPage() {
   }, [currentYear]);
 
   useEffect(() => {
-    if (!rowId) return;
+    if (!rowId || !seasonId) return;
     stemsApi.list(rowId).then(data => {
       const active = data
         .filter(s => s.is_active)
@@ -135,7 +184,7 @@ export function RowCanvasPage() {
       active.forEach(stem => loadStemData(stem.id));
     });
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [rowId, currentYear, currentWeek]);
+  }, [rowId, seasonId, currentYear, currentWeek]);
 
   useEffect(() => {
     return onRemap((tempId, realId, type) => {
@@ -186,7 +235,10 @@ export function RowCanvasPage() {
   async function loadStemData(stemId: string) {
     const [nodes, statuses, growth] = await Promise.all([
       nodesApi.list(stemId),
-      weeklyStatusesApi.list(stemId, currentYear, currentWeek),
+      weeklyStatusesApi.list(stemId, currentYear, currentWeek, {
+        seasonId,
+        latestPerNode: true,
+      }),
       stemGrowthApi.get(stemId, currentYear, currentWeek),
     ]);
     setNodesByStem(prev => ({
@@ -385,14 +437,14 @@ export function RowCanvasPage() {
 
   const mainNodes = allNodes.filter(n => !n.is_side_shoot);
 
-  const shootsByParent: Record<string, { left?: PlantNode; right?: PlantNode }> = {};
+  // Group ALL side shoots by parent node id (not just one per side)
+  const shootsByParentNode: Record<string, PlantNode[]> = {};
   allNodes
     .filter(n => n.is_side_shoot && n.parent_node_id)
     .forEach(n => {
       const pid = n.parent_node_id!;
-      if (!shootsByParent[pid]) shootsByParent[pid] = {};
-      if (n.side === 'left')  shootsByParent[pid].left  = n;
-      if (n.side === 'right') shootsByParent[pid].right = n;
+      if (!shootsByParentNode[pid]) shootsByParentNode[pid] = [];
+      shootsByParentNode[pid].push(n);
     });
 
   const hasPrev = safeIndex > 0;
@@ -513,71 +565,88 @@ export function RowCanvasPage() {
               )}
 
               {mainNodes.map(node => {
-                const statusRec = activeStatuses.find(s => s.plant_node_id === node.id);
-                const cfg = statusRec
-                  ? (STATUS_CONFIG[statusRec.status as NodeStatus] ?? LEGACY_STATUS_CONFIG)
+                const statusRec  = activeStatuses.find(s => s.plant_node_id === node.id);
+                const nodeStatus = getRecordStatus(statusRec) as NodeStatus | null;
+                const cfg = nodeStatus
+                  ? (STATUS_CONFIG[nodeStatus] ?? LEGACY_STATUS_CONFIG)
                   : null;
 
                 // Odd node_number → shoot on right, badge on left
                 // Even node_number → shoot on left, badge on right
                 const shootSide: 'left' | 'right' = node.node_number % 2 !== 0 ? 'right' : 'left';
-                const existingShoot = (shootsByParent[node.id] ?? {})[shootSide];
+                // All shoots for this node, ordered by label suffix (1+1, 1+2, …)
+                const nodeShoots = (shootsByParentNode[node.id] ?? [])
+                  .slice()
+                  .sort((a, b) => {
+                    const nA = parseInt(a.node_label?.match(/\+(\d+)$/)?.[1] ?? '0', 10);
+                    const nB = parseInt(b.node_label?.match(/\+(\d+)$/)?.[1] ?? '0', 10);
+                    return nA - nB;
+                  });
 
-                const mainBadge = cfg ? (
-                  <span className="stem-node-badge" style={{ background: cfg.bg, color: cfg.color }}>
-                    {statusRec ? statusLabel(statusRec.status) : '—'}
-                  </span>
-                ) : (
-                  <span className="stem-node-badge stem-node-badge--empty">—</span>
-                );
+                const mainIcon = nodeStatus ? getStatusIcon(nodeStatus) : undefined;
 
-                const shootElement = existingShoot ? (() => {
-                  const sr = activeStatuses.find(s => s.plant_node_id === existingShoot.id);
-                  const sc = sr ? (STATUS_CONFIG[sr.status as NodeStatus] ?? LEGACY_STATUS_CONFIG) : null;
-                  const shootBadge = sc ? (
-                    <span className="shoot-badge" style={{ background: sc.bg, color: sc.color }}>{statusLabel(sr!.status)}</span>
-                  ) : (
-                    <span className="shoot-badge shoot-badge--empty">—</span>
-                  );
-                  // Left:  [badge][connector][circle]
-                  // Right: [connector][circle][badge]
-                  return (
-                    <div className={`shoot-item shoot-item--${shootSide}`}>
-                      {shootSide === 'left' && shootBadge}
-                      <div className="shoot-connector" />
-                      <button
-                        type="button"
-                        className="shoot-node-btn"
-                        style={{
-                          borderColor: sc?.color ?? 'var(--gray-300)',
-                          background:  sc?.bg    ?? 'var(--white)',
-                          color:       sc?.color ?? 'var(--gray-600)',
-                        }}
-                        title={existingShoot.node_label ?? 'Tap to set status'}
-                        onClick={e => { e.stopPropagation(); setStatusPickerCtx({ stem: activeStem!, node: existingShoot }); }}
-                      >
-                        {existingShoot.node_label}
-                      </button>
-                      {shootSide === 'right' && shootBadge}
-                    </div>
-                  );
-                })() : (
-                  <button
-                    type="button"
-                    className="stem-side-add-btn"
-                    onClick={e => { e.stopPropagation(); handleAddShoot(node, shootSide); }}
-                  >+</button>
+                // Shoot zone: one icon-circle per shoot + always-visible add button.
+                // DOM order is [connector?, …icons, +btn]; shoot-zone--left reverses via
+                // row-reverse so the connector always sits closest to the main stem.
+                const MAX_VISIBLE = 3;
+                const visibleShoots = nodeShoots.slice(0, MAX_VISIBLE);
+                const hiddenCount   = nodeShoots.length - MAX_VISIBLE;
+                const shootZone = (
+                  <div className={`shoot-zone shoot-zone--${shootSide}`}>
+                    {nodeShoots.length > 0 && <div className="shoot-connector" />}
+                    {visibleShoots.map(shoot => {
+                      const sr        = activeStatuses.find(s => s.plant_node_id === shoot.id);
+                      const srStatus  = getRecordStatus(sr) as NodeStatus | null;
+                      const sc        = srStatus ? (STATUS_CONFIG[srStatus] ?? LEGACY_STATUS_CONFIG) : null;
+                      const shootIcon = srStatus ? getStatusIcon(srStatus) : undefined;
+                      const cellLabel = srStatus ? shortStatusLabel(srStatus) : (shoot.node_label ?? '?');
+                      return (
+                        <div key={shoot.id} className="shoot-node-cell">
+                          <button
+                            type="button"
+                            className="shoot-icon-btn"
+                            style={{
+                              borderColor: sc?.color ?? 'var(--gray-300)',
+                              background:  sc?.bg    ?? 'var(--white)',
+                              color:       sc?.color ?? 'var(--gray-500)',
+                            }}
+                            title={shoot.node_label ?? 'Tap to set status'}
+                            onClick={e => { e.stopPropagation(); setStatusPickerCtx({ stem: activeStem!, node: shoot }); }}
+                          >
+                            {shootIcon
+                              ? <img src={shootIcon} alt="" width={20} height={20} />
+                              : srStatus
+                                ? <span style={{ fontSize: 9, fontWeight: 700, lineHeight: 1 }}>
+                                    {shortStatusLabel(srStatus).slice(0, 3)}
+                                  </span>
+                                : <span style={{ fontSize: 9, color: 'var(--gray-400)', lineHeight: 1 }}>
+                                    {shoot.node_label ?? '?'}
+                                  </span>}
+                          </button>
+                          <span className="shoot-node-cell-label">{cellLabel}</span>
+                        </div>
+                      );
+                    })}
+                    {hiddenCount > 0 && (
+                      <span className="shoot-overflow-badge">+{hiddenCount}</span>
+                    )}
+                    <button
+                      type="button"
+                      className="stem-side-add-btn"
+                      onClick={e => { e.stopPropagation(); handleAddShoot(node, shootSide); }}
+                    >+</button>
+                  </div>
                 );
 
                 return (
                   <div key={node.id} className="stem-node-section">
 
-                    {/* Left zone: shoot/+ (even) or badge (odd) */}
+                    {/* Left zone: shoots (even node) only */}
                     <div className="stem-side-zone stem-side-zone--left">
-                      {shootSide === 'left' ? shootElement : mainBadge}
+                      {shootSide === 'left' ? shootZone : null}
                     </div>
 
-                    {/* Main zone: node circle */}
+                    {/* Main zone: status icon inside circle + short label below */}
                     <div className="stem-main-zone">
                       <button
                         type="button"
@@ -590,13 +659,24 @@ export function RowCanvasPage() {
                         title={cfg ? cfg.label : 'Tap to set status'}
                         onClick={() => setStatusPickerCtx({ stem: activeStem!, node })}
                       >
-                        {node.node_number}
+                        {mainIcon
+                          ? <img src={mainIcon} alt="" width={24} height={24} />
+                          : nodeStatus
+                            ? <span style={{ fontSize: 9, fontWeight: 700, lineHeight: 1 }}>
+                                {shortStatusLabel(nodeStatus).slice(0, 3)}
+                              </span>
+                            : node.node_number}
                       </button>
+                      {nodeStatus && (
+                        <span className="stem-node-status-label">
+                          {shortStatusLabel(nodeStatus)}
+                        </span>
+                      )}
                     </div>
 
-                    {/* Right zone: shoot/+ (odd) or badge (even) */}
+                    {/* Right zone: shoots (odd node) only */}
                     <div className="stem-side-zone stem-side-zone--right">
-                      {shootSide === 'right' ? shootElement : mainBadge}
+                      {shootSide === 'right' ? shootZone : null}
                     </div>
 
                   </div>
@@ -724,7 +804,8 @@ export function RowCanvasPage() {
                 const currentRec = (statusesByStem[statusPickerCtx.stem.id] ?? []).find(
                   s => s.plant_node_id === statusPickerCtx.node.id,
                 );
-                const isActive = currentRec?.status === opt.value;
+                const isActive = getRecordStatus(currentRec) === opt.value;
+                const icon = getStatusIcon(opt.value);
                 return (
                   <button
                     key={opt.value}
@@ -733,7 +814,8 @@ export function RowCanvasPage() {
                     onClick={() => !saving && handleSaveStatus(opt.value)}
                     disabled={saving}
                   >
-                    {opt.label}
+                    {icon && <img src={icon} alt="" width={32} height={32} style={{ flexShrink: 0 }} />}
+                    <span>{opt.label}</span>
                   </button>
                 );
               })}

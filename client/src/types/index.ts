@@ -249,6 +249,34 @@ export interface StemGrowthMeasurement {
   updated_at: string;
 }
 
+export interface Phase {
+  id: string;
+  organization_id?: string | null;
+  name: string;
+  sort_order: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface Zone {
+  id: string;
+  organization_id?: string | null;
+  phase_id: string;
+  name: string;
+  import_key: string;
+  sort_order: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface VarietyZone {
+  id: string;
+  organization_id?: string | null;
+  variety_id: string;
+  zone_id: string;
+  created_at: string;
+}
+
 export interface Block {
   id: string;
   organization_id?: string | null;
