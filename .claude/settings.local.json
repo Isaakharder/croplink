@@ -24,7 +24,32 @@
       "Bash(Get-ChildItem -Path \"C:\\\\CropLink\" -Recurse -Directory)",
       "Bash(Select-Object -First 30)",
       "Bash(awk '{print $NF}')",
-      "Bash(grep -v \"^$\")"
+      "Bash(grep -v \"^$\")",
+      "Bash(exit 0)",
+      "Bash(supabase --version)",
+      "Bash(supabase migration *)",
+      "Bash(echo \"started with pid $!\")",
+      "Skill(run)",
+      "Skill(run:*)",
+      "Bash(cat /tmp/croplink_dev.log 2>&1 | tail -60; echo \"---procs---\"; ps aux | grep -E \"vite|tsx|node\" | grep -v grep)",
+      "Read(//tmp/**)",
+      "Bash(curl -s http://localhost:3001/api/growlink/variety-links -m 5)",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\\\\n\" http://localhost:5173 -m 5)",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\\\\n\" http://localhost:5174 -m 5)",
+      "Bash(chromium-cli --version)",
+      "Bash(npx --yes playwright --version)",
+      "Bash(npx playwright *)",
+      "Bash(node \"C:\\\\Users\\\\Isaak\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\c--CropLink\\\\b1208aeb-332a-4bc1-b776-9d9d70100332\\\\scratchpad\\\\verify_growlink.mjs\")",
+      "Bash(cp \"C:\\\\Users\\\\Isaak\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\c--CropLink\\\\b1208aeb-332a-4bc1-b776-9d9d70100332\\\\scratchpad\\\\verify_growlink.mjs\" c:/CropLink/verify_growlink.mjs)",
+      "Bash(node ./verify_growlink.mjs)",
+      "Bash(rm -f c:/CropLink/verify_growlink.mjs)",
+      "Bash(node verify_growlink.mjs)",
+      "Bash(netstat -ano)",
+      "Bash(taskkill //PID 31100 //F)",
+      "Bash(ls \"C:\\\\Users\\\\Isaak\\\\.claude\\\\projects\\\\c--CropLink\\\\memory\\\\\" 2>&1)",
+      "Read(//c/Users/Isaak/.claude/projects/c--CropLink/**)",
+      "Bash(ls 'C:\\\\Users\\\\Isaak\\\\.claude\\\\projects\\\\c--CropLink\\\\memory')",
+      "Read(//c/Users/Isaak/.claude/projects/c--CropLink/memory/**)"
     ]
   }
 }

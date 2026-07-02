@@ -299,6 +299,40 @@ export interface BlockClimateSummary {
   updated_at: string;
 }
 
+export type GrowlinkLinkStatus = 'linked' | 'unlinked' | 'conflict';
+
+export interface GrowlinkVarietyLink {
+  id: string;
+  organization_id?: string | null;
+  variety_id: string;
+  growlink_variety_key: string;
+  link_status: GrowlinkLinkStatus;
+  notes?: string | null;
+  last_synced_at?: string | null;
+  created_at: string;
+  updated_at: string;
+  variety?: { id: string; name: string; is_active: boolean } | null;
+}
+
+export interface GrowlinkHarvestActual {
+  id: string;
+  organization_id?: string | null;
+  growlink_harvest_key: string;
+  growlink_variety_key: string;
+  variety_id?: string | null;
+  harvest_date: string;
+  year: number;
+  week_number: number;
+  kg?: number | null;
+  cases?: number | null;
+  case_weight_kg?: number | null;
+  source_payload?: unknown | null;
+  synced_at: string;
+  created_at: string;
+  updated_at: string;
+  variety?: { id: string; name: string } | null;
+}
+
 export interface MeasurementSummaryResponse {
   summary: {
     totalMeasuredRows: number;

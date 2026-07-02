@@ -27,6 +27,8 @@ import climateImportsRouter from './routes/climateImports';
 import phasesRouter from './routes/phases';
 import zonesRouter from './routes/zones';
 import varietyZonesRouter from './routes/varietyZones';
+import growlinkVarietyLinksRouter from './routes/growlinkVarietyLinks';
+import growlinkHarvestActualsRouter from './routes/growlinkHarvestActuals';
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -66,6 +68,10 @@ const setupApi = '/api/setup';
 app.use(`${setupApi}/phases`, phasesRouter);
 app.use(`${setupApi}/zones`, zonesRouter);
 app.use(`${setupApi}/variety-zones`, varietyZonesRouter);
+
+const growlinkApi = '/api/growlink';
+app.use(`${growlinkApi}/variety-links`, growlinkVarietyLinksRouter);
+app.use(`${growlinkApi}/harvest-actuals`, growlinkHarvestActualsRouter);
 
 // Serve static files from client build in production
 if (process.env.NODE_ENV === 'production') {

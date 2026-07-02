@@ -7,6 +7,7 @@ import { HarvestedPage } from './pages/HarvestedPage';
 import { ProjectionsPage } from './pages/ProjectionsPage';
 import { ClimatePage } from './pages/ClimatePage';
 import { SetupPage } from './pages/SetupPage';
+import { GrowLinkPage } from './pages/GrowLinkPage';
 import { MobileMeasurementsPage } from './pages/MobileMeasurementsPage';
 import { RowCanvasPage } from './pages/RowCanvasPage';
 
@@ -36,6 +37,7 @@ export default function App() {
             <Route path="/projections" element={<ProjectionsPage />} />
             <Route path="/climate" element={<ClimatePage />} />
             <Route path="/setup" element={<SetupPage />} />
+            <Route path="/growlink" element={<GrowLinkPage />} />
           </Route>
       </Routes>
     </BrowserRouter>

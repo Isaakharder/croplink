@@ -24,6 +24,7 @@ import { apiUrl } from './apiBase';
 const BASE = apiUrl('/api/projection');
 const CLIMATE_BASE = apiUrl('/api/climate');
 const SETUP_BASE = apiUrl('/api/setup');
+const GROWLINK_BASE = apiUrl('/api/growlink');
 
 async function requestFrom<T>(base: string, path: string, options?: RequestInit): Promise<T> {
   const res = await fetch(`${base}${path}`, {
@@ -48,6 +49,10 @@ async function climateRequest<T>(path: string, options?: RequestInit): Promise<T
 
 async function setupRequest<T>(path: string, options?: RequestInit): Promise<T> {
   return requestFrom<T>(SETUP_BASE, path, options);
+}
+
+async function growlinkRequest<T>(path: string, options?: RequestInit): Promise<T> {
+  return requestFrom<T>(GROWLINK_BASE, path, options);
 }
 
 function compareWeeklyStatusRecency(a: WeeklyNodeStatus, b: WeeklyNodeStatus): number {
@@ -398,6 +403,51 @@ export const blockClimateSummaryApi = {
     if (end) params.set('end', end);
     return climateRequest<import('../types').BlockClimateSummary[]>(`/block-summary?${params.toString()}`);
   },
+};
+
+// GrowLink Variety Links — maps a local variety to GrowLink's external variety key
+export const growlinkVarietyLinksApi = {
+  list: (status?: import('../types').GrowlinkLinkStatus) =>
+    growlinkRequest<import('../types').GrowlinkVarietyLink[]>(
+      `/variety-links${status ? `?status=${status}` : ''}`
+    ),
+  create: (data: {
+    variety_id: string;
+    growlink_variety_key: string;
+    link_status?: import('../types').GrowlinkLinkStatus;
+    notes?: string | null;
+  }) =>
+    growlinkRequest<import('../types').GrowlinkVarietyLink>('/variety-links', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
+  update: (
+    id: string,
+    data: { growlink_variety_key?: string; link_status?: import('../types').GrowlinkLinkStatus; notes?: string | null }
+  ) =>
+    growlinkRequest<import('../types').GrowlinkVarietyLink>(`/variety-links/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify(data),
+    }),
+  setStatus: (id: string, link_status: import('../types').GrowlinkLinkStatus) =>
+    growlinkRequest<import('../types').GrowlinkVarietyLink>(`/variety-links/${id}/status`, {
+      method: 'PATCH',
+      body: JSON.stringify({ link_status }),
+    }),
+  delete: (id: string) => growlinkRequest<void>(`/variety-links/${id}`, { method: 'DELETE' }),
+};
+
+// GrowLink Harvest Actuals — read-only; populated by the future GrowLink sync service
+export const growlinkHarvestActualsApi = {
+  list: (params?: { varietyId?: string; year?: number; matched?: boolean }) => {
+    const q = new URLSearchParams();
+    if (params?.varietyId) q.set('varietyId', params.varietyId);
+    if (params?.year != null) q.set('year', String(params.year));
+    if (params?.matched !== undefined) q.set('matched', String(params.matched));
+    const qs = q.toString();
+    return growlinkRequest<import('../types').GrowlinkHarvestActual[]>(`/harvest-actuals${qs ? `?${qs}` : ''}`);
+  },
+  get: (id: string) => growlinkRequest<import('../types').GrowlinkHarvestActual>(`/harvest-actuals/${id}`),
 };
 
 // Projection
