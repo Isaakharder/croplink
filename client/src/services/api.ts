@@ -405,6 +405,23 @@ export const blockClimateSummaryApi = {
   },
 };
 
+// GrowLink Connection — base URL + integration key used to call GrowLink's API.
+// The secret key is write-only from the client's perspective: save/test send it,
+// but get() never receives it back (only has_key/masked_key).
+export const growlinkConnectionApi = {
+  get: () => growlinkRequest<import('../types').GrowlinkConnection>('/connection'),
+  save: (data: { base_url: string; secret_key?: string }) =>
+    growlinkRequest<import('../types').GrowlinkConnection>('/connection', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
+  test: (data?: { base_url?: string; secret_key?: string }) =>
+    growlinkRequest<import('../types').GrowlinkConnectionTestResult>('/connection/test', {
+      method: 'POST',
+      body: JSON.stringify(data ?? {}),
+    }),
+};
+
 // GrowLink Variety Links — maps a local variety to GrowLink's external variety key
 export const growlinkVarietyLinksApi = {
   list: (status?: import('../types').GrowlinkLinkStatus) =>

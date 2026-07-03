@@ -641,6 +641,12 @@ table tr.report-group__header-row:hover td {
   border: 1px solid #fecaca;
 }
 
+.alert-success {
+  background: var(--green-100);
+  color: var(--green-700);
+  border: 1px solid #bbf7d0;
+}
+
 /* Modal overlay */
 .modal-overlay {
   position: fixed;

@@ -1,6 +1,17 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
-import { Variety, GrowlinkVarietyLink, GrowlinkHarvestActual, GrowlinkLinkStatus } from '../types';
-import { varietiesApi, growlinkVarietyLinksApi, growlinkHarvestActualsApi } from '../services/api';
+import {
+  Variety,
+  GrowlinkVarietyLink,
+  GrowlinkHarvestActual,
+  GrowlinkLinkStatus,
+  GrowlinkConnectionStatus,
+} from '../types';
+import {
+  varietiesApi,
+  growlinkVarietyLinksApi,
+  growlinkHarvestActualsApi,
+  growlinkConnectionApi,
+} from '../services/api';
 
 const STATUS_BADGE: Record<GrowlinkLinkStatus, string> = {
   linked: 'badge-green',
@@ -14,9 +25,189 @@ const STATUS_LABEL: Record<GrowlinkLinkStatus, string> = {
   conflict: 'Conflict',
 };
 
+const CONNECTION_STATUS_BADGE: Record<GrowlinkConnectionStatus, string> = {
+  not_configured: 'badge-gray',
+  connected: 'badge-green',
+  connection_failed: 'badge-red',
+};
+
+const CONNECTION_STATUS_LABEL: Record<GrowlinkConnectionStatus, string> = {
+  not_configured: 'Not Configured',
+  connected: 'Connected',
+  connection_failed: 'Connection Failed',
+};
+
 function formatDateTime(value?: string | null) {
   if (!value) return '—';
   return new Date(value).toLocaleString();
+}
+
+// ─── GrowlinkConnectionCard ─────────────────────────────────────────────────
+
+function GrowlinkConnectionCard() {
+  const [baseUrl, setBaseUrl] = useState('');
+  const [secretKey, setSecretKey] = useState('');
+  const [hasKey, setHasKey] = useState(false);
+  const [maskedKey, setMaskedKey] = useState<string | null>(null);
+  const [status, setStatus] = useState<GrowlinkConnectionStatus>('not_configured');
+  const [lastTestedAt, setLastTestedAt] = useState<string | null>(null);
+  const [lastError, setLastError] = useState<string | null>(null);
+  const [varietyCount, setVarietyCount] = useState<number | null>(null);
+  // Cached for the next task (variety dropdown) — not rendered here yet.
+  const [, setCachedVarieties] = useState<unknown[] | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [testing, setTesting] = useState(false);
+  const [formError, setFormError] = useState('');
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const data = await growlinkConnectionApi.get();
+      setBaseUrl(data.base_url ?? '');
+      setHasKey(data.has_key);
+      setMaskedKey(data.masked_key);
+      setStatus(data.status);
+      setLastTestedAt(data.last_tested_at);
+      setLastError(data.last_error);
+    } catch (err: unknown) {
+      setFormError(err instanceof Error ? err.message : 'Failed to load GrowLink connection settings');
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => { load(); }, [load]);
+
+  async function handleSave(e: React.FormEvent) {
+    e.preventDefault();
+    setFormError('');
+    if (!baseUrl.trim()) return setFormError('GrowLink API URL is required');
+    if (!hasKey && !secretKey.trim()) return setFormError('Integration key is required');
+    setSaving(true);
+    try {
+      const data = await growlinkConnectionApi.save({
+        base_url: baseUrl.trim(),
+        secret_key: secretKey.trim() || undefined,
+      });
+      setBaseUrl(data.base_url ?? '');
+      setHasKey(data.has_key);
+      setMaskedKey(data.masked_key);
+      setStatus(data.status);
+      setLastTestedAt(data.last_tested_at);
+      setLastError(data.last_error);
+      setSecretKey('');
+      setVarietyCount(null);
+      setCachedVarieties(null);
+    } catch (err: unknown) {
+      setFormError(err instanceof Error ? err.message : 'Save failed');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function handleTest() {
+    setFormError('');
+    if (!baseUrl.trim()) return setFormError('GrowLink API URL is required');
+    if (!hasKey && !secretKey.trim()) return setFormError('Integration key is required');
+    setTesting(true);
+    try {
+      const result = await growlinkConnectionApi.test({
+        base_url: baseUrl.trim(),
+        secret_key: secretKey.trim() || undefined,
+      });
+      if (result.ok) {
+        setStatus('connected');
+        setLastError(null);
+        setVarietyCount(result.varietyCount);
+        setCachedVarieties(result.varieties);
+      } else {
+        setStatus('connection_failed');
+        setLastError(result.error);
+        setVarietyCount(null);
+        setCachedVarieties(null);
+      }
+      setLastTestedAt(new Date().toISOString());
+    } catch (err: unknown) {
+      setStatus('connection_failed');
+      setLastError(err instanceof Error ? err.message : 'Test failed');
+      setVarietyCount(null);
+      setCachedVarieties(null);
+      setLastTestedAt(new Date().toISOString());
+    } finally {
+      setTesting(false);
+    }
+  }
+
+  if (loading) {
+    return (
+      <div className="card mb-4">
+        <div className="loading">Loading…</div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="card mb-4">
+      <div className="flex items-center justify-between mb-4">
+        <div className="card-title" style={{ margin: 0 }}>GrowLink Connection</div>
+        <span className={`badge ${CONNECTION_STATUS_BADGE[status]}`}>{CONNECTION_STATUS_LABEL[status]}</span>
+      </div>
+
+      {formError && <div className="alert alert-error mb-4">{formError}</div>}
+      {!formError && status === 'connection_failed' && lastError && (
+        <div className="alert alert-error mb-4">{lastError}</div>
+      )}
+      {!formError && status === 'connected' && varietyCount != null && (
+        <div className="alert alert-success mb-4">
+          Connected — {varietyCount} GrowLink {varietyCount === 1 ? 'variety' : 'varieties'} found.
+        </div>
+      )}
+
+      <form onSubmit={handleSave}>
+        <div className="grid-2">
+          <div className="form-group">
+            <label className="form-label">GrowLink API URL *</label>
+            <input
+              className="form-control"
+              value={baseUrl}
+              onChange={e => setBaseUrl(e.target.value)}
+              placeholder="https://growlinkclient-production.up.railway.app"
+            />
+          </div>
+          <div className="form-group">
+            <label className="form-label">Integration Key {hasKey ? '' : '*'}</label>
+            <input
+              className="form-control"
+              type="password"
+              value={secretKey}
+              onChange={e => setSecretKey(e.target.value)}
+              placeholder="gki_..."
+              autoComplete="off"
+            />
+            <small style={{ display: 'block', marginTop: 4, opacity: 0.65, fontSize: '0.8em' }}>
+              {hasKey ? `Current key: ${maskedKey} — leave blank to keep it` : 'Not set yet'}
+            </small>
+          </div>
+        </div>
+
+        {lastTestedAt && (
+          <div style={{ fontSize: '0.8em', opacity: 0.65, marginBottom: 12 }}>
+            Last tested {formatDateTime(lastTestedAt)}
+          </div>
+        )}
+
+        <div className="flex gap-2">
+          <button type="submit" className="btn btn-primary" disabled={saving}>
+            {saving ? 'Saving…' : 'Save Connection'}
+          </button>
+          <button type="button" className="btn btn-secondary" onClick={handleTest} disabled={testing}>
+            {testing ? 'Testing…' : 'Test Connection'}
+          </button>
+        </div>
+      </form>
+    </div>
+  );
 }
 
 // ─── VarietyLinkModal ─────────────────────────────────────────────────────────
@@ -466,6 +657,7 @@ export function GrowLinkPage() {
       </div>
 
       <div className="page-body">
+        <GrowlinkConnectionCard />
         {tab === 'links' ? <VarietyLinksTab /> : <HarvestActualsTab />}
       </div>
     </>

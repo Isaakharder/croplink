@@ -299,6 +299,22 @@ export interface BlockClimateSummary {
   updated_at: string;
 }
 
+export type GrowlinkConnectionStatus = 'not_configured' | 'connected' | 'connection_failed';
+
+export interface GrowlinkConnection {
+  base_url: string | null;
+  has_key: boolean;
+  masked_key: string | null;
+  status: GrowlinkConnectionStatus;
+  last_tested_at: string | null;
+  last_success_at: string | null;
+  last_error: string | null;
+}
+
+export type GrowlinkConnectionTestResult =
+  | { ok: true; varietyCount: number; varieties: unknown[] }
+  | { ok: false; error: string };
+
 export type GrowlinkLinkStatus = 'linked' | 'unlinked' | 'conflict';
 
 export interface GrowlinkVarietyLink {

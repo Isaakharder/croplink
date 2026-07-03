@@ -29,6 +29,7 @@ import zonesRouter from './routes/zones';
 import varietyZonesRouter from './routes/varietyZones';
 import growlinkVarietyLinksRouter from './routes/growlinkVarietyLinks';
 import growlinkHarvestActualsRouter from './routes/growlinkHarvestActuals';
+import growlinkConnectionRouter from './routes/growlinkConnection';
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -70,6 +71,7 @@ app.use(`${setupApi}/zones`, zonesRouter);
 app.use(`${setupApi}/variety-zones`, varietyZonesRouter);
 
 const growlinkApi = '/api/growlink';
+app.use(`${growlinkApi}/connection`, growlinkConnectionRouter);
 app.use(`${growlinkApi}/variety-links`, growlinkVarietyLinksRouter);
 app.use(`${growlinkApi}/harvest-actuals`, growlinkHarvestActualsRouter);
 
