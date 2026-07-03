@@ -77,6 +77,13 @@ function shortStatusLabel(status: string): string {
   return SHORT_STATUS_LABEL[status] ?? statusLabel(status);
 }
 
+// Side-shoot display notation: "<parent node number>+<order>", e.g. "5+1", "5+2".
+// `order` currently counts shoots on the same parent; a future secondary-branch
+// dimension can extend this (e.g. an extra "+level" segment) without touching callers.
+function formatShootLabel(parentNodeNumber: number, order: number): string {
+  return `${parentNodeNumber}+${order}`;
+}
+
 // Normalise the status string out of a record regardless of which field name the
 // backend used — old records may arrive as status_key, status_type, or crop_status.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -299,7 +306,7 @@ export function RowCanvasPage() {
     const existingCount = stemNodes.filter(
       n => n.is_side_shoot && n.parent_node_id === parentNode.id,
     ).length;
-    const label = `${parentNode.node_number}+${existingCount + 1}`;
+    const label = formatShootLabel(parentNode.node_number, existingCount + 1);
     const created = await nodesApi.create({
       measurement_stem_id: activeStem.id,
       node_number: parentNode.node_number,
@@ -594,14 +601,16 @@ export function RowCanvasPage() {
                 const shootZone = (
                   <div className={`shoot-zone shoot-zone--${shootSide}`}>
                     {nodeShoots.length > 0 && <div className="shoot-connector" />}
-                    {visibleShoots.map(shoot => {
+                    {visibleShoots.map((shoot, shootIdx) => {
                       const sr        = activeStatuses.find(s => s.plant_node_id === shoot.id);
                       const srStatus  = getRecordStatus(sr) as NodeStatus | null;
                       const sc        = srStatus ? (STATUS_CONFIG[srStatus] ?? LEGACY_STATUS_CONFIG) : null;
                       const shootIcon = srStatus ? getStatusIcon(srStatus) : undefined;
                       const cellLabel = srStatus ? shortStatusLabel(srStatus) : (shoot.node_label ?? '?');
+                      const shootNumberLabel = shoot.node_label ?? formatShootLabel(node.node_number, shootIdx + 1);
                       return (
                         <div key={shoot.id} className="shoot-node-cell">
+                          <span className="shoot-number-label">{shootNumberLabel}</span>
                           <button
                             type="button"
                             className="shoot-icon-btn"
@@ -641,9 +650,11 @@ export function RowCanvasPage() {
                 return (
                   <div key={node.id} className="stem-node-section">
 
-                    {/* Left zone: shoots (even node) only */}
+                    {/* Left zone: shoots (even node) on the left; otherwise the node number */}
                     <div className="stem-side-zone stem-side-zone--left">
-                      {shootSide === 'left' ? shootZone : null}
+                      {shootSide === 'left'
+                        ? shootZone
+                        : <span className="stem-node-number-label">{node.node_number}</span>}
                     </div>
 
                     {/* Main zone: status icon inside circle + short label below */}
@@ -674,9 +685,11 @@ export function RowCanvasPage() {
                       )}
                     </div>
 
-                    {/* Right zone: shoots (odd node) only */}
+                    {/* Right zone: shoots (odd node) on the right; otherwise the node number */}
                     <div className="stem-side-zone stem-side-zone--right">
-                      {shootSide === 'right' ? shootZone : null}
+                      {shootSide === 'right'
+                        ? shootZone
+                        : <span className="stem-node-number-label">{node.node_number}</span>}
                     </div>
 
                   </div>

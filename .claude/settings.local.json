@@ -62,7 +62,8 @@
       "Bash(nohup npm run dev --workspace=client -- --port 5210 --strictPort)",
       "Bash(curl -s -o /dev/null -w \"%{http_code}\" http://localhost:5210 -m 2)",
       "Bash(node verify_dropdown.mjs)",
-      "Bash(taskkill //PID 17368 //F)"
+      "Bash(taskkill //PID 17368 //F)",
+      "Bash(grep -iE \"\\\\.tsx$\")"
     ]
   }
 }

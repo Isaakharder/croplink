@@ -1511,6 +1511,21 @@ table tr.report-group__header-row:hover td {
   gap: 3px;
 }
 
+/* Main-stem node number, shown in the side zone opposite the side shoot */
+.stem-node-number-label {
+  font-size: 8px;
+  font-weight: 500;
+  color: var(--gray-600);
+  white-space: nowrap;
+  line-height: 1;
+}
+.stem-side-zone--left .stem-node-number-label {
+  margin-right: 4px;
+}
+.stem-side-zone--right .stem-node-number-label {
+  margin-left: 4px;
+}
+
 /* Short status label shown below the main node circle */
 .stem-node-status-label {
   font-size: 9px;
@@ -1653,6 +1668,15 @@ table tr.report-group__header-row:hover td {
   flex-direction: column;
   align-items: center;
   gap: 2px;
+}
+
+/* Side-shoot numbering label (e.g. "5+1"), shown above the shoot icon */
+.shoot-number-label {
+  font-size: 8px;
+  font-weight: 500;
+  color: var(--gray-600);
+  white-space: nowrap;
+  line-height: 1;
 }
 
 /* Short status label below a shoot circle */
