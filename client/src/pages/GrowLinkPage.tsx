@@ -42,9 +42,43 @@ function formatDateTime(value?: string | null) {
   return new Date(value).toLocaleString();
 }
 
+// A variety as reported by GrowLink's own API — not a CropLink DB entity, so
+// it doesn't live in types/index.ts. Normalized defensively since the exact
+// field names on GrowLink's side aren't something we control here.
+interface GrowlinkRemoteVariety {
+  id: string;
+  name: string;
+  color: string | null;
+}
+
+function normalizeGrowlinkVariety(raw: unknown): GrowlinkRemoteVariety | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const r = raw as Record<string, unknown>;
+  const id = r.id ?? r.varietyId ?? r.variety_id ?? r.uuid;
+  const name = r.name ?? r.varietyName ?? r.variety_name ?? r.label;
+  if (typeof id !== 'string' || !id) return null;
+  if (typeof name !== 'string' || !name) return null;
+  const colorRaw = r.color ?? r.colour ?? null;
+  const color = typeof colorRaw === 'string' && colorRaw.trim() ? colorRaw.trim() : null;
+  return { id, name, color };
+}
+
+function normalizeGrowlinkVarieties(list: unknown[]): GrowlinkRemoteVariety[] {
+  return list
+    .map(normalizeGrowlinkVariety)
+    .filter((v): v is GrowlinkRemoteVariety => v !== null)
+    .sort((a, b) => a.name.localeCompare(b.name));
+}
+
+type RemoteVarietiesState = 'loading' | 'ready' | 'unavailable';
+
 // ─── GrowlinkConnectionCard ─────────────────────────────────────────────────
 
-function GrowlinkConnectionCard() {
+function GrowlinkConnectionCard({
+  onVarietiesChange,
+}: {
+  onVarietiesChange: (varieties: GrowlinkRemoteVariety[] | null) => void;
+}) {
   const [baseUrl, setBaseUrl] = useState('');
   const [secretKey, setSecretKey] = useState('');
   const [hasKey, setHasKey] = useState(false);
@@ -53,8 +87,6 @@ function GrowlinkConnectionCard() {
   const [lastTestedAt, setLastTestedAt] = useState<string | null>(null);
   const [lastError, setLastError] = useState<string | null>(null);
   const [varietyCount, setVarietyCount] = useState<number | null>(null);
-  // Cached for the next task (variety dropdown) — not rendered here yet.
-  const [, setCachedVarieties] = useState<unknown[] | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
@@ -98,7 +130,8 @@ function GrowlinkConnectionCard() {
       setLastError(data.last_error);
       setSecretKey('');
       setVarietyCount(null);
-      setCachedVarieties(null);
+      // base_url/key changed — the cached GrowLink variety list is stale until re-tested.
+      onVarietiesChange(null);
     } catch (err: unknown) {
       setFormError(err instanceof Error ? err.message : 'Save failed');
     } finally {
@@ -120,19 +153,19 @@ function GrowlinkConnectionCard() {
         setStatus('connected');
         setLastError(null);
         setVarietyCount(result.varietyCount);
-        setCachedVarieties(result.varieties);
+        onVarietiesChange(normalizeGrowlinkVarieties(result.varieties));
       } else {
         setStatus('connection_failed');
         setLastError(result.error);
         setVarietyCount(null);
-        setCachedVarieties(null);
+        onVarietiesChange(null);
       }
       setLastTestedAt(new Date().toISOString());
     } catch (err: unknown) {
       setStatus('connection_failed');
       setLastError(err instanceof Error ? err.message : 'Test failed');
       setVarietyCount(null);
-      setCachedVarieties(null);
+      onVarietiesChange(null);
       setLastTestedAt(new Date().toISOString());
     } finally {
       setTesting(false);
@@ -216,12 +249,18 @@ function VarietyLinkModal({
   initial,
   presetVariety,
   varietyOptions,
+  links,
+  remoteVarieties,
+  remoteVarietiesState,
   onSave,
   onClose,
 }: {
   initial?: GrowlinkVarietyLink | null;
   presetVariety?: Variety | null;
   varietyOptions: Variety[];
+  links: GrowlinkVarietyLink[];
+  remoteVarieties: GrowlinkRemoteVariety[] | null;
+  remoteVarietiesState: RemoteVarietiesState;
   onSave: (link: GrowlinkVarietyLink) => void;
   onClose: () => void;
 }) {
@@ -233,10 +272,29 @@ function VarietyLinkModal({
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
 
+  // A GrowLink variety can only back one local link at a time — hide options
+  // already claimed by other links, but keep this link's own current choice
+  // selectable.
+  const usedGrowlinkKeys = useMemo(
+    () => new Set(links.filter(l => l.id !== initial?.id).map(l => l.growlink_variety_key)),
+    [links, initial]
+  );
+
+  const growlinkOptions = useMemo(() => {
+    const base = (remoteVarieties ?? []).filter(v => v.id === growlinkKey || !usedGrowlinkKeys.has(v.id));
+    if (growlinkKey && remoteVarietiesState === 'ready' && !base.some(v => v.id === growlinkKey)) {
+      // Previously linked to a GrowLink variety that's no longer in the list
+      // (renamed/removed upstream, or list not yet refreshed). Keep it
+      // selectable so saving without changes doesn't silently clear it.
+      base.unshift({ id: growlinkKey, name: 'Unmatched GrowLink variety', color: null });
+    }
+    return base;
+  }, [remoteVarieties, remoteVarietiesState, growlinkKey, usedGrowlinkKeys]);
+
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!varietyId) return setError('Variety is required');
-    if (!growlinkKey.trim()) return setError('GrowLink variety key is required');
+    if (!growlinkKey) return setError('Select a GrowLink variety');
     setSaving(true);
     try {
       let result: GrowlinkVarietyLink;
@@ -282,16 +340,33 @@ function VarietyLinkModal({
             )}
           </div>
           <div className="form-group">
-            <label className="form-label">GrowLink Variety Key *</label>
-            <input
-              className="form-control"
-              value={growlinkKey}
-              onChange={e => setGrowlinkKey(e.target.value)}
-              placeholder="e.g. GL-VAR-00231"
-            />
-            <small style={{ display: 'block', marginTop: 4, opacity: 0.65, fontSize: '0.8em' }}>
-              Stable identifier GrowLink uses for this variety
-            </small>
+            <label className="form-label">GrowLink Variety *</label>
+            {remoteVarietiesState === 'unavailable' ? (
+              <>
+                <select className="form-control" disabled>
+                  <option>Connect to GrowLink first.</option>
+                </select>
+                <small style={{ display: 'block', marginTop: 4, opacity: 0.65, fontSize: '0.8em' }}>
+                  Configure and test the GrowLink Connection above to select a variety.
+                </small>
+              </>
+            ) : (
+              <select
+                className="form-control"
+                value={growlinkKey}
+                disabled={remoteVarietiesState === 'loading'}
+                onChange={e => setGrowlinkKey(e.target.value)}
+              >
+                <option value="">
+                  {remoteVarietiesState === 'loading' ? 'Loading GrowLink varieties…' : '— select GrowLink variety —'}
+                </option>
+                {growlinkOptions.map(v => (
+                  <option key={v.id} value={v.id} title={v.id}>
+                    {v.name}{v.color ? ` (${v.color})` : ''}
+                  </option>
+                ))}
+              </select>
+            )}
           </div>
           <div className="form-group">
             <label className="form-label">Link Status</label>
@@ -317,13 +392,24 @@ function VarietyLinkModal({
 
 // ─── VarietyLinksTab ────────────────────────────────────────────────────────
 
-function VarietyLinksTab() {
+function VarietyLinksTab({
+  remoteVarieties,
+  remoteVarietiesState,
+}: {
+  remoteVarieties: GrowlinkRemoteVariety[] | null;
+  remoteVarietiesState: RemoteVarietiesState;
+}) {
   const [varieties, setVarieties] = useState<Variety[]>([]);
   const [links, setLinks] = useState<GrowlinkVarietyLink[]>([]);
   const [loading, setLoading] = useState(true);
   const [modal, setModal] = useState<{ open: boolean; item?: GrowlinkVarietyLink | null; presetVariety?: Variety | null }>({ open: false });
   const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null);
   const [error, setError] = useState('');
+
+  const remoteVarietiesById = useMemo(
+    () => new Map((remoteVarieties ?? []).map(v => [v.id, v])),
+    [remoteVarieties]
+  );
 
   const loadAll = useCallback(async () => {
     setLoading(true);
@@ -393,7 +479,7 @@ function VarietyLinksTab() {
               <thead>
                 <tr>
                   <th>Variety</th>
-                  <th>GrowLink Key</th>
+                  <th>GrowLink Variety</th>
                   <th>Status</th>
                   <th>Last Synced</th>
                   <th>Notes</th>
@@ -401,10 +487,18 @@ function VarietyLinksTab() {
                 </tr>
               </thead>
               <tbody>
-                {links.map(link => (
+                {links.map(link => {
+                  const remote = remoteVarietiesById.get(link.growlink_variety_key);
+                  return (
                   <tr key={link.id}>
                     <td style={{ fontWeight: 600 }}>{link.variety?.name ?? '—'}</td>
-                    <td><code>{link.growlink_variety_key}</code></td>
+                    <td>
+                      {remote ? (
+                        <span title={remote.id}>{remote.name}{remote.color ? ` (${remote.color})` : ''}</span>
+                      ) : (
+                        <span className="badge badge-yellow" title={link.growlink_variety_key}>Unresolved</span>
+                      )}
+                    </td>
                     <td><span className={`badge ${STATUS_BADGE[link.link_status]}`}>{STATUS_LABEL[link.link_status]}</span></td>
                     <td>{formatDateTime(link.last_synced_at)}</td>
                     <td style={{ color: 'var(--gray-500)', maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
@@ -429,7 +523,8 @@ function VarietyLinksTab() {
                       </div>
                     </td>
                   </tr>
-                ))}
+                  );
+                })}
               </tbody>
             </table>
           </div>
@@ -477,6 +572,9 @@ function VarietyLinksTab() {
           initial={modal.item}
           presetVariety={modal.presetVariety}
           varietyOptions={unlinkedVarieties}
+          links={links}
+          remoteVarieties={remoteVarieties}
+          remoteVarietiesState={remoteVarietiesState}
           onSave={link => {
             setLinks(prev => {
               const exists = prev.find(l => l.id === link.id);
@@ -635,6 +733,34 @@ function HarvestActualsTab() {
 
 export function GrowLinkPage() {
   const [tab, setTab] = useState<'links' | 'actuals'>('links');
+  const [remoteVarieties, setRemoteVarieties] = useState<GrowlinkRemoteVariety[] | null>(null);
+  const [remoteVarietiesState, setRemoteVarietiesState] = useState<RemoteVarietiesState>('loading');
+
+  // Populates the GrowLink Variety dropdown from the saved connection, without
+  // requiring the user to click "Test Connection" first.
+  const refreshRemoteVarieties = useCallback(async () => {
+    setRemoteVarietiesState('loading');
+    try {
+      const result = await growlinkConnectionApi.test();
+      if (result.ok) {
+        setRemoteVarieties(normalizeGrowlinkVarieties(result.varieties));
+        setRemoteVarietiesState('ready');
+      } else {
+        setRemoteVarieties(null);
+        setRemoteVarietiesState('unavailable');
+      }
+    } catch {
+      setRemoteVarieties(null);
+      setRemoteVarietiesState('unavailable');
+    }
+  }, []);
+
+  useEffect(() => { refreshRemoteVarieties(); }, [refreshRemoteVarieties]);
+
+  function handleConnectionVarietiesChange(varieties: GrowlinkRemoteVariety[] | null) {
+    setRemoteVarieties(varieties);
+    setRemoteVarietiesState(varieties ? 'ready' : 'unavailable');
+  }
 
   return (
     <>
@@ -657,8 +783,12 @@ export function GrowLinkPage() {
       </div>
 
       <div className="page-body">
-        <GrowlinkConnectionCard />
-        {tab === 'links' ? <VarietyLinksTab /> : <HarvestActualsTab />}
+        <GrowlinkConnectionCard onVarietiesChange={handleConnectionVarietiesChange} />
+        {tab === 'links' ? (
+          <VarietyLinksTab remoteVarieties={remoteVarieties} remoteVarietiesState={remoteVarietiesState} />
+        ) : (
+          <HarvestActualsTab />
+        )}
       </div>
     </>
   );
