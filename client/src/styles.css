@@ -683,11 +683,6 @@ table tr.report-group__header-row:hover td {
   margin-top: 20px;
 }
 
-/* Check percent cell */
-.check-good { color: var(--green-600); font-weight: 700; }
-.check-bad { color: var(--red-500); font-weight: 700; }
-.check-blank { color: var(--gray-400); }
-
 /* Loading */
 .loading {
   display: flex;
@@ -930,6 +925,263 @@ table tr.report-group__header-row:hover td {
   background: var(--green-50);
   border-color: var(--green-500);
   box-shadow: 0 0 0 1px var(--green-400);
+}
+
+/* Actual harvest-timing cells — read-only, derived from fruit_instances */
+.actual-cell {
+  text-align: center;
+  padding: 2px 6px;
+  cursor: default;
+}
+
+.actual-cell-total {
+  background: var(--gray-50);
+}
+
+.actual-cell-pct {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--green-700);
+  font-variant-numeric: tabular-nums;
+}
+
+.actual-cell-count {
+  font-size: 10px;
+  color: var(--gray-400);
+  font-variant-numeric: tabular-nums;
+}
+
+.actual-cell-blank {
+  text-align: center;
+  color: var(--gray-300);
+  font-size: 12px;
+}
+
+.actual-cell-blank-inline {
+  color: var(--gray-300);
+  font-size: 12px;
+}
+
+/* Confirmed-harvested vs provisional-breaker split within a cell */
+.actual-cell-harvested + .actual-cell-breaker {
+  margin-top: 3px;
+  padding-top: 3px;
+  border-top: 1px dashed var(--gray-200);
+}
+
+.actual-cell-pct-harvested {
+  color: var(--green-700);
+}
+
+.actual-cell-pct-breaker {
+  color: #b45309;
+}
+
+/* Legend below the calculator table */
+.actual-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  padding: 10px 20px;
+  border-top: 1px solid var(--gray-100);
+  font-size: 11px;
+  color: var(--gray-500);
+}
+
+.actual-legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.actual-legend-swatch {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+}
+
+.actual-legend-swatch-harvested {
+  background: var(--green-700);
+}
+
+.actual-legend-swatch-breaker {
+  background: #b45309;
+}
+
+.actual-legend-swatch-blank {
+  width: auto;
+  height: auto;
+  border-radius: 0;
+  color: var(--gray-300);
+  font-weight: 700;
+}
+
+/* Actual Harvest Timing Summary panel */
+.summary-stat-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 13px;
+  padding: 4px 0;
+  color: var(--gray-700);
+  gap: 12px;
+}
+
+.summary-stat-row span {
+  color: var(--gray-500);
+  font-size: 12px;
+}
+
+.summary-divider {
+  border-top: 1px solid var(--gray-100);
+  margin: 8px 0;
+}
+
+.summary-stat-breaker-label {
+  color: #b45309 !important;
+}
+
+.summary-stat-breaker-value {
+  color: #b45309;
+}
+
+.summary-note {
+  margin-top: 4px;
+  font-size: 11px;
+  color: var(--gray-400);
+  font-style: italic;
+}
+
+/* Forecast method banner above the calculator table */
+.forecast-method-banner {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  padding: 8px 20px;
+  background: #fffbeb;
+  border-bottom: 1px solid var(--gray-100);
+  font-size: 11px;
+  color: var(--gray-600);
+}
+
+.forecast-method-banner strong {
+  color: #b45309;
+}
+
+/* Row expander toggle in the Wk column */
+.row-expand-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: none;
+  border: none;
+  padding: 0;
+  font: inherit;
+  font-weight: 600;
+  color: var(--gray-500);
+  cursor: pointer;
+}
+
+.row-expand-toggle:hover {
+  color: var(--green-700);
+}
+
+.row-expand-chevron {
+  display: inline-block;
+  font-size: 9px;
+  transition: transform 0.1s;
+}
+
+.row-expand-chevron--open {
+  transform: rotate(90deg);
+}
+
+/* Expandable row-detail panel */
+.row-detail-row td {
+  padding: 0;
+  background: var(--gray-50);
+  border-bottom: 2px solid var(--gray-200);
+}
+
+.row-detail {
+  padding: 14px 20px;
+}
+
+.row-detail-summary {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  gap: 6px 20px;
+  margin-bottom: 8px;
+}
+
+.row-detail-summary > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 12px;
+}
+
+.row-detail-summary span {
+  color: var(--gray-500);
+}
+
+.row-detail-summary strong {
+  color: var(--gray-800);
+  font-variant-numeric: tabular-nums;
+}
+
+.row-detail-profile {
+  font-size: 11px;
+  color: #b45309;
+  margin-bottom: 10px;
+}
+
+.row-detail-table-scroll {
+  max-height: 260px;
+  overflow-y: auto;
+  border: 1px solid var(--gray-200);
+  border-radius: 6px;
+  background: var(--white);
+}
+
+.row-detail-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 11px;
+}
+
+.row-detail-table thead th {
+  position: sticky;
+  top: 0;
+  background: var(--gray-100);
+  padding: 5px 8px;
+  text-align: left;
+  font-weight: 600;
+  color: var(--gray-500);
+  border-bottom: 1px solid var(--gray-200);
+}
+
+.row-detail-table td {
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--gray-100);
+  color: var(--gray-700);
+  white-space: nowrap;
+}
+
+.row-detail-table tr.row-detail-flagged td {
+  background: #fffbeb;
+}
+
+.row-detail-flag-badge {
+  display: inline-block;
+  font-size: 10px;
+  font-weight: 600;
+  color: #b45309;
+  background: #fef3c7;
+  border-radius: 4px;
+  padding: 2px 6px;
+  cursor: default;
 }
 
 @media (max-width: 900px) {
@@ -1448,6 +1700,111 @@ table tr.report-group__header-row:hover td {
   color: var(--gray-400);
   text-align: center;
   padding: 8px 0;
+}
+
+/*
+ * Row holding the main fruit/status stem beside the secondary Veg
+ * Measurement Stem. The main stem keeps its full layout and simply
+ * shrinks (min-width: 0) to make room for the narrow, fixed-width Veg
+ * column — it never wraps or causes horizontal overflow on mobile.
+ */
+.stem-canvas-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 4px;
+  width: 100%;
+  min-width: 0;
+}
+
+.stem-canvas-row .stem-visual {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+/* Secondary Veg Measurement Stem — compact, fixed-width, visually subordinate */
+.veg-stem-column {
+  flex: 0 0 auto;
+  width: 52px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  border-left: 1px dashed var(--gray-200);
+  padding-left: 6px;
+}
+
+.veg-stem-label {
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--gray-400);
+  margin-bottom: 2px;
+}
+
+.veg-stem-visual {
+  position: relative;
+  display: flex;
+  flex-direction: column-reverse;
+  align-items: center;
+  gap: 6px;
+  padding: 14px 0;
+  min-height: 60px;
+  width: 100%;
+}
+
+.veg-stem-line {
+  position: absolute;
+  width: 2px;
+  top: 14px;
+  bottom: 14px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: #bfdbfe;
+  border-radius: 1px;
+  z-index: 0;
+}
+
+.veg-stem-node-row {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+}
+
+.veg-stem-node-dot {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--white);
+  border: 2px solid #1d4ed8;
+}
+
+.veg-stem-node-number {
+  font-size: 9px;
+  font-weight: 600;
+  color: var(--gray-600);
+  line-height: 1;
+}
+
+.veg-stem-growth-row {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  justify-content: center;
+}
+
+.veg-stem-growth-value {
+  font-size: 9px;
+  font-weight: 700;
+  color: #1d4ed8;
+  background: #eff6ff;
+  border: 1px solid #bfdbfe;
+  border-radius: 8px;
+  padding: 1px 5px;
+  white-space: nowrap;
+  line-height: 1.4;
 }
 
 /* Circular node button — sits on top of the stem line */
@@ -2150,6 +2507,90 @@ table tr.report-group__header-row:hover td {
   margin-top: 8px;
   font-size: 11px;
   color: var(--yellow-500);
+}
+
+.breaker-harvested-note {
+  margin-top: 4px;
+  font-size: 11px;
+  color: var(--gray-400);
+  font-style: italic;
+}
+
+.breaker-adj-note {
+  margin-top: -2px;
+  margin-bottom: 4px;
+  font-size: 11px;
+  color: var(--gray-400);
+}
+
+.breaker-details-toggle {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--gray-500);
+  background: var(--gray-100);
+  border: none;
+  border-radius: 4px;
+  padding: 3px 8px;
+  cursor: pointer;
+}
+
+.breaker-details-toggle:hover {
+  background: var(--gray-200);
+}
+
+.breaker-details {
+  display: flex;
+  gap: 24px;
+  flex-wrap: wrap;
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid var(--gray-200);
+}
+
+.breaker-details-block {
+  flex: 1;
+  min-width: 320px;
+}
+
+.breaker-details-title {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--gray-400);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-bottom: 8px;
+}
+
+.breaker-details-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+  margin-bottom: 10px;
+}
+
+.breaker-details-table td {
+  padding: 3px 8px 3px 0;
+  color: var(--gray-700);
+  border-bottom: 1px solid var(--gray-100);
+}
+
+.breaker-details-table td:last-child {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  color: var(--gray-900);
+  font-weight: 500;
+}
+
+.breaker-details-formula {
+  font-family: var(--font-mono, monospace);
+  font-size: 11px;
+  line-height: 1.6;
+  color: var(--gray-600);
+  background: var(--gray-50);
+  border-radius: 6px;
+  padding: 10px 12px;
+  overflow-x: auto;
+  white-space: pre;
 }
 
 .empty-hint {

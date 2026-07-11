@@ -199,35 +199,70 @@ async function handleSetFruit(args: {
 
   const today = new Date().toISOString().slice(0, 10);
 
-  // Check for existing instance (unique constraint: plant_node_id + set_year + set_week_number)
-  const { data: existing } = await supabase
+  // A node keeps getting recorded as SetFruit every week it's still in that
+  // stage — not just on the week it first transitioned. Only one fruit cycle
+  // can be "open" (status='set') on a node at a time, so look for that open
+  // instance regardless of which week it was originally set, rather than
+  // matching on the exact (node, year, week) triple. That exact-match check
+  // used to create a new fruit_instances row every week the surveyor
+  // re-recorded SetFruit, orphaning the true original set week.
+  const { data: openInstances } = await supabase
     .from('fruit_instances')
-    .select('id')
+    .select('id, set_year, set_week_number')
     .eq('plant_node_id', plantNodeId)
-    .eq('set_year', year)
-    .eq('set_week_number', weekNumber)
-    .maybeSingle();
+    .eq('status', 'set')
+    .order('set_year', { ascending: true })
+    .order('set_week_number', { ascending: true })
+    .limit(1);
 
-  if (existing) {
-    // Update the status link in case it was re-recorded
-    await supabase
-      .from('fruit_instances')
-      .update({ set_status_id: weeklyStatusId, updated_at: new Date().toISOString() })
-      .eq('id', existing.id);
-  } else {
-    await supabase.from('fruit_instances').insert({
-      organization_id: nodeOrgId ?? organizationId,
-      variety_id: varietyId,
-      measurement_row_id: rowId,
-      measurement_stem_id: stemId,
-      plant_node_id: plantNodeId,
-      set_year: year,
-      set_week_number: weekNumber,
-      set_date: today,
-      set_status_id: weeklyStatusId,
-      status: 'set',
-    });
+  const open = openInstances?.[0] as
+    | { id: string; set_year: number; set_week_number: number }
+    | undefined;
+
+  if (open) {
+    const isEarlier =
+      year < open.set_year || (year === open.set_year && weekNumber < open.set_week_number);
+    const isSameWeek = year === open.set_year && weekNumber === open.set_week_number;
+
+    if (isEarlier) {
+      // Out-of-order entry revealed an earlier true set week — move the
+      // canonical row back rather than creating a second one.
+      await supabase
+        .from('fruit_instances')
+        .update({
+          set_year: year,
+          set_week_number: weekNumber,
+          set_date: today,
+          set_status_id: weeklyStatusId,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', open.id);
+    } else if (isSameWeek) {
+      // Re-recorded the same week — just refresh the status link.
+      await supabase
+        .from('fruit_instances')
+        .update({ set_status_id: weeklyStatusId, updated_at: new Date().toISOString() })
+        .eq('id', open.id);
+    }
+    // Later week than the existing open instance: the fruit is still in
+    // SetFruit stage; the original set week already stands, nothing to do.
+    return undefined;
   }
+
+  // No open instance — a genuinely new set event (first ever, or a new cycle
+  // after the prior instance on this node was harvested/aborted/pruned).
+  await supabase.from('fruit_instances').insert({
+    organization_id: nodeOrgId ?? organizationId,
+    variety_id: varietyId,
+    measurement_row_id: rowId,
+    measurement_stem_id: stemId,
+    plant_node_id: plantNodeId,
+    set_year: year,
+    set_week_number: weekNumber,
+    set_date: today,
+    set_status_id: weeklyStatusId,
+    status: 'set',
+  });
   return undefined;
 }
 

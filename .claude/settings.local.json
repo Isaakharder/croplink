@@ -63,7 +63,39 @@
       "Bash(curl -s -o /dev/null -w \"%{http_code}\" http://localhost:5210 -m 2)",
       "Bash(node verify_dropdown.mjs)",
       "Bash(taskkill //PID 17368 //F)",
-      "Bash(grep -iE \"\\\\.tsx$\")"
+      "Bash(grep -iE \"\\\\.tsx$\")",
+      "Bash(node \"C:\\\\Users\\\\Isaak\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\c--CropLink\\\\7b6a11e3-ea03-4ec4-acca-670a617d96a4\\\\scratchpad\\\\check_veg.js\")",
+      "Bash(node \"C:\\\\Users\\\\Isaak\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\c--CropLink\\\\7b6a11e3-ea03-4ec4-acca-670a617d96a4\\\\scratchpad\\\\check_get.js\")",
+      "Bash(node \"C:\\\\Users\\\\Isaak\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\c--CropLink\\\\7b6a11e3-ea03-4ec4-acca-670a617d96a4\\\\scratchpad\\\\check_variety.js\")",
+      "Bash(curl -s \"http://localhost:3001/api/projection/stem-growth-measurements?stemId=af8c2edb-0ccf-4ccb-9271-d1a4be0e5a4a&year=2026&weekNumber=27\")",
+      "Bash(curl -s \"http://localhost:3001/api/projection/mobile/rows?varietyId=207d1da5-e102-46ba-9740-c1998415870f\")",
+      "Bash(supabase db *)",
+      "Bash(node \"C:\\\\Users\\\\Isaak\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\c--CropLink\\\\7b6a11e3-ea03-4ec4-acca-670a617d96a4\\\\scratchpad\\\\verify_column.js\")",
+      "Bash(node \"C:\\\\Users\\\\Isaak\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\c--CropLink\\\\7b6a11e3-ea03-4ec4-acca-670a617d96a4\\\\scratchpad\\\\check_top_node.js\")",
+      "Bash(curl -s -X POST http://localhost:3001/api/projection/stem-growth-measurements/upsert -H 'Content-Type: application/json' -d '{\"stemId\":\"af8c2edb-0ccf-4ccb-9271-d1a4be0e5a4a\",\"year\":2026,\"weekNumber\":1,\"growthCm\":5.5,\"notes\":\"tmp-verify\"}')",
+      "Bash(curl -s \"http://localhost:3001/api/projection/stem-growth-measurements/history?stemId=af8c2edb-0ccf-4ccb-9271-d1a4be0e5a4a\")",
+      "Bash(node \"C:\\\\Users\\\\Isaak\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\c--CropLink\\\\7b6a11e3-ea03-4ec4-acca-670a617d96a4\\\\scratchpad\\\\cleanup_test_row.js\")",
+      "Bash(rm -f \"C:\\\\Users\\\\Isaak\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\c--CropLink\\\\7b6a11e3-ea03-4ec4-acca-670a617d96a4\\\\scratchpad\"/*.js)",
+      "Bash(node \"C:\\\\Users\\\\Isaak\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\c--CropLink\\\\2a3f4943-86ed-4f34-8007-dda83a993c41\\\\scratchpad\\\\investigate.js\")",
+      "Bash(cp \"C:\\\\Users\\\\Isaak\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\c--CropLink\\\\2a3f4943-86ed-4f34-8007-dda83a993c41\\\\scratchpad\\\\investigate.js\" /c/CropLink/server/investigate_tmp.js)",
+      "Bash(node investigate_tmp.js)",
+      "Bash(node investigate_tmp2.js)",
+      "Bash(curl -s \"http://localhost:3001/api/v1/breaker-learning?year=2026&varietyId=207d1da5-e102-46ba-9740-c1998415870f\")",
+      "Bash(curl -s \"http://localhost:3001/api/projection/breaker-learning?year=2026&varietyId=207d1da5-e102-46ba-9740-c1998415870f\")",
+      "Bash(pkill -f \"ts-node src/index.ts\")",
+      "Bash(node investigate_fi.js)",
+      "Bash(npx tsx *)",
+      "Bash(node investigate_post.js)",
+      "Bash(curl -s \"http://localhost:3001/api/projection/ripening-actuals?varietyId=207d1da5-e102-46ba-9740-c1998415870f&year=2026\")",
+      "Bash(node -e \"let d='';process.stdin.on\\('data',c=>d+=c\\);process.stdin.on\\('end',\\(\\)=>{const j=JSON.parse\\(d\\);console.log\\(JSON.stringify\\(j.summary,null,2\\)\\);console.log\\('currentWeek:',j.currentWeek\\);console.log\\('numRows:',j.rows.length\\);}\\)\")",
+      "Bash(pkill -f \"tsx src/index.ts\")",
+      "Bash(node investigate_w22.js)",
+      "Bash(node investigate_w23_audit.js)",
+      "Bash(node investigate_learned_sample.js)",
+      "Bash(node verify_distribution.js)"
+    ],
+    "additionalDirectories": [
+      "C:\\Users\\Isaak\\AppData\\Local\\Temp\\claude\\c--CropLink\\7b6a11e3-ea03-4ec4-acca-670a617d96a4\\scratchpad"
     ]
   }
 }

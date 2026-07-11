@@ -182,27 +182,116 @@ export interface BreakerLearningResult {
   varietyId: string;
   year: number;
   currentWeek: number;
+  nextWeek: number;
   avgBreakerToHarvestWeeks: number;
   harvestedWithinOneWeekPercent: number;
   sampleSize: number;
+  varietyTotalStemCount: number;
+  varietyAreaM2: number;
   currentWeekBreakerCount: number;
   currentWeekMeasuredStemCount: number;
   currentWeekBreakerFruitPerM2: number;
+  nextWeekAfw: number;
   nextWeekBreakerKgEstimate: number;
+  nextWeekBreakerKgEstimateRaw: number;
+  minSampleSizeForAdjustment: number;
+  adjustmentSuppressed: boolean;
   missingAfwWarning: boolean;
+  currentWeekHarvestedCount: number;
+  currentWeekHarvestedFruitPerM2: number;
+  currentWeekAfw: number;
+  currentWeekHarvestedKgEstimate: number;
+  missingHarvestedAfwWarning: boolean;
+}
+
+export interface RipeningActualsOffsetCell {
+  offset: number;
+  hasOccurred: boolean;
+  harvestedCount: number;
+  harvestedPercent: number;
+  harvestedSampleStems: string[];
+  /** Fractional — a probabilistic forecast, not a confirmed count. */
+  breakerExpectedCount: number;
+  breakerExpectedPercent: number;
+  breakerSampleStems: string[];
+}
+
+export interface RipeningActualsInstanceDetail {
+  id: string;
+  row: string;
+  stem: string;
+  node: number | null;
+  setWeek: number;
+  setDate: string | null;
+  status: string;
+  firstBreakerWeek: number | null;
+  breakerDate: string | null;
+  latestStatus: string | null;
+  latestStatusWeek: number | null;
+  actualHarvestWeek: number | null;
+  originalExpectedHarvestWeek: number | null;
+  currentExpectedHarvestWeek: number | null;
+  rolledForward: boolean;
+  needsReview: boolean;
+  needsReviewReason: string | null;
 }
 
 export interface RipeningActualsRow {
   setWeekNumber: number;
   setCount: number;
-  harvestedByOffset: {
-    week4: number; week5: number; week6: number; week7: number;
-    week8: number; week9: number; week10: number;
+  harvestedCount: number;
+  harvestedPercent: number;
+  abortedCount: number;
+  prunedCount: number;
+  /** status='set', never entered BreakerFruit (still SetFruit/MatureGreen). */
+  otherOutstandingCount: number;
+  /** status='set' with breaker history, but latest recorded status no longer confirms BreakerFruit — a data-quality flag, not a forecast input. */
+  unreconciledCount: number;
+  outsideWindowHarvestedCount: number;
+  /** Actual current BreakerFruit count — integer, not a forecast. */
+  breakerCount: number;
+  breakerPercent: number;
+  breakerEarlierExpectedCount: number;
+  breakerLaterExpectedCount: number;
+  breakerRolledForwardCount: number;
+  offsets: RipeningActualsOffsetCell[];
+  instances: RipeningActualsInstanceDetail[];
+}
+
+export interface RipeningActualsSummary {
+  totalSetInstances: number;
+  totalCompleted: number;
+  totalOutstanding: number;
+  totalAborted: number;
+  totalPruned: number;
+  totalCurrentBreakers: number;
+  totalUnreconciled: number;
+  totalBreakerRolledForward: number;
+  sampleSize: number;
+  avgWeeksToHarvest: number | null;
+  medianWeeksToHarvest: number | null;
+  modeWeeksToHarvest: number | null;
+  cumulativePercentByOffset: Record<string, number>;
+}
+
+export interface BreakerForecastMeta {
+  method: 'learned' | 'fallback';
+  sampleSize: number;
+  minSampleSize: number;
+  profilePercent: {
+    same: number;
+    plus1: number;
+    plus2: number;
+    plus3: number;
+    later: number;
   };
-  harvestedPercentByOffset: {
-    week4Percent: number; week5Percent: number; week6Percent: number; week7Percent: number;
-    week8Percent: number; week9Percent: number; week10Percent: number;
-  };
+}
+
+export interface RipeningActualsResult {
+  rows: RipeningActualsRow[];
+  summary: RipeningActualsSummary;
+  breakerForecast: BreakerForecastMeta;
+  currentWeek: number | null;
 }
 
 export interface HarvestProjectionWeek {
@@ -244,6 +333,7 @@ export interface StemGrowthMeasurement {
   measurement_row_id: string;
   measurement_stem_id: string;
   growth_cm: number;
+  top_node_number?: number | null;
   notes?: string | null;
   created_at: string;
   updated_at: string;

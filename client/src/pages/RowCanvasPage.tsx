@@ -166,6 +166,7 @@ export function RowCanvasPage() {
   const [message,  setMessage]  = useState('');
 
   const [growthByStem, setGrowthByStem] = useState<Record<string, StemGrowthMeasurement | null>>({});
+  const [vegHistoryByStem, setVegHistoryByStem] = useState<Record<string, StemGrowthMeasurement[]>>({});
   const [vegModal,     setVegModal]     = useState(false);
   const [vegGrowthCm,  setVegGrowthCm]  = useState('');
   const [vegNotes,     setVegNotes]     = useState('');
@@ -240,13 +241,14 @@ export function RowCanvasPage() {
   }, [rowId, navigate, location.state]);
 
   async function loadStemData(stemId: string) {
-    const [nodes, statuses, growth] = await Promise.all([
+    const [nodes, statuses, growth, vegHistory] = await Promise.all([
       nodesApi.list(stemId),
       weeklyStatusesApi.list(stemId, currentYear, currentWeek, {
         seasonId,
         latestPerNode: true,
       }),
       stemGrowthApi.get(stemId, currentYear, currentWeek),
+      stemGrowthApi.history(stemId),
     ]);
     setNodesByStem(prev => ({
       ...prev,
@@ -256,6 +258,7 @@ export function RowCanvasPage() {
     }));
     setStatusesByStem(prev => ({ ...prev, [stemId]: statuses }));
     setGrowthByStem(prev => ({ ...prev, [stemId]: growth }));
+    setVegHistoryByStem(prev => ({ ...prev, [stemId]: vegHistory }));
   }
 
   async function handleAddStem(name: string) {
@@ -399,6 +402,18 @@ export function RowCanvasPage() {
         notes: vegNotes.trim() || null,
       });
       setGrowthByStem(prev => ({ ...prev, [activeStem.id]: saved }));
+      if (saved.top_node_number != null) {
+        setVegHistoryByStem(prev => {
+          const existing = prev[activeStem.id] ?? [];
+          const withoutSaved = existing.filter(
+            g => !(g.year === saved.year && g.week_number === saved.week_number)
+          );
+          const next = [...withoutSaved, saved].sort(
+            (a, b) => a.year - b.year || a.week_number - b.week_number
+          );
+          return { ...prev, [activeStem.id]: next };
+        });
+      }
       setMessage(`Growth: ${saved.growth_cm} cm saved`);
       setVegModal(false);
     } catch (err: unknown) {
@@ -443,6 +458,29 @@ export function RowCanvasPage() {
   const activeStatuses = activeStem ? (statusesByStem[activeStem.id] ?? []) : [];
 
   const mainNodes = allNodes.filter(n => !n.is_side_shoot);
+
+  // ── Veg Measurement Stem (secondary, node-aligned growth readings) ──────
+  // Each reading's top_node_number is "the highest active main-stem node at
+  // save time" — visually that places the reading in the gap directly below
+  // that node (i.e. between it and the node one lower), so a chip is emitted
+  // right before its matching node as we walk mainNodes bottom-to-top.
+  const vegHistory = activeStem ? (vegHistoryByStem[activeStem.id] ?? []) : [];
+  const vegByTopNode: Record<number, StemGrowthMeasurement[]> = {};
+  vegHistory.forEach(g => {
+    if (g.top_node_number == null) return;
+    (vegByTopNode[g.top_node_number] ??= []).push(g);
+  });
+  type VegRow =
+    | { kind: 'node'; node: PlantNode }
+    | { kind: 'growth'; growth: StemGrowthMeasurement };
+  const vegRows: VegRow[] = [];
+  mainNodes.forEach(node => {
+    (vegByTopNode[node.node_number] ?? []).forEach(growth => {
+      vegRows.push({ kind: 'growth', growth });
+    });
+    vegRows.push({ kind: 'node', node });
+  });
+  const hasVegStem = vegHistory.length > 0 && vegRows.some(r => r.kind === 'node');
 
   // Group ALL side shoots by parent node id (not just one per side)
   const shootsByParentNode: Record<string, PlantNode[]> = {};
@@ -559,6 +597,7 @@ export function RowCanvasPage() {
               </div>
             )}
 
+            <div className="stem-canvas-row">
             {/*
              * column-reverse: first DOM child (N1) sits at the BOTTOM;
              * the highest node number is directly below "+ Node".
@@ -695,6 +734,32 @@ export function RowCanvasPage() {
                   </div>
                 );
               })}
+            </div>
+
+            {/*
+             * Secondary, node-aligned Veg Measurement Stem. Not a weekly
+             * timeline — no week labels. Same node numbers as the main
+             * stem above; growth_cm values sit in the gap below the node
+             * that was the top of the stem when each reading was saved.
+             */}
+            {hasVegStem && (
+              <div className="veg-stem-column">
+                <div className="veg-stem-label">Veg</div>
+                <div className="veg-stem-visual">
+                  <div className="veg-stem-line" />
+                  {vegRows.map(row => row.kind === 'node' ? (
+                    <div key={`vn-${row.node.id}`} className="veg-stem-node-row">
+                      <span className="veg-stem-node-dot" />
+                      <span className="veg-stem-node-number">{row.node.node_number}</span>
+                    </div>
+                  ) : (
+                    <div key={`vg-${row.growth.id}`} className="veg-stem-growth-row">
+                      <span className="veg-stem-growth-value">{row.growth.growth_cm} cm</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
             </div>
 
           </div>

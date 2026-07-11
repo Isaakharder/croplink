@@ -13,6 +13,7 @@ export function ProjectionsPage() {
   const [error, setError] = useState<string | null>(null);
   const [breakerData, setBreakerData] = useState<BreakerLearningResult | null>(null);
   const [caseKgInput, setCaseKgInput] = useState<string>('');
+  const [showBreakerDetails, setShowBreakerDetails] = useState(false);
 
   useEffect(() => {
     yearsApi.list().then((s) => {
@@ -223,19 +224,29 @@ export function ProjectionsPage() {
               {/* Breaker adjustment card — only when a single variety is selected */}
               {breakerData && selectedVarietyId && (() => {
                 const currentWeek = breakerData.currentWeek;
-                const nextWeek = currentWeek === 52 ? 1 : currentWeek + 1;
+                const nextWeek = breakerData.nextWeek;
                 const baseKg = data?.weeklyTotals.find(w => w.week === nextWeek)?.byVariety[selectedVarietyId] ?? 0;
                 const adjustedKg = Math.round((baseKg + breakerData.nextWeekBreakerKgEstimate) * 10) / 10;
                 const caseKg = caseKgByVariety[selectedVarietyId];
+                const n = (v: number, digits = 0) => v.toLocaleString(undefined, { maximumFractionDigits: digits });
                 return (
                   <div className="projections-card projections-card--full breaker-card">
                     <div className="breaker-card-header">
                       <h3 className="projections-card-title" style={{ marginBottom: 0 }}>
                         Breaker Adjustment — Next Week (W{nextWeek})
                       </h3>
-                      {breakerData.sampleSize > 0 && (
-                        <span className="breaker-sample-tag">n={breakerData.sampleSize} historical</span>
-                      )}
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                        {breakerData.sampleSize > 0 && (
+                          <span className="breaker-sample-tag">n={breakerData.sampleSize} historical</span>
+                        )}
+                        <button
+                          type="button"
+                          className="breaker-details-toggle"
+                          onClick={() => setShowBreakerDetails((v) => !v)}
+                        >
+                          {showBreakerDetails ? 'Hide calculation' : 'Show calculation'}
+                        </button>
+                      </div>
                     </div>
 
                     <div className="breaker-grid">
@@ -253,6 +264,18 @@ export function ProjectionsPage() {
                           <span>Breaker fruit / m²</span>
                           <strong>{breakerData.currentWeekBreakerFruitPerM2.toFixed(3)}</strong>
                         </div>
+                        <div className="breaker-stat-row">
+                          <span>Harvested / m²</span>
+                          <strong>
+                            {breakerData.currentWeekHarvestedFruitPerM2.toFixed(3)}
+                            {breakerData.currentWeekHarvestedKgEstimate > 0 && (
+                              <span className="breaker-cases-sub"> (~{n(breakerData.currentWeekHarvestedKgEstimate)} kg)</span>
+                            )}
+                          </strong>
+                        </div>
+                        <div className="breaker-harvested-note">
+                          Display only — not used for historical learning or projection correction.
+                        </div>
                       </div>
 
                       {breakerData.sampleSize > 0 && (
@@ -263,7 +286,7 @@ export function ProjectionsPage() {
                             <strong>{breakerData.avgBreakerToHarvestWeeks.toFixed(1)}</strong>
                           </div>
                           <div className="breaker-stat-row">
-                            <span>Harvested within 1 wk</span>
+                            <span>Historical 1-week harvest rate</span>
                             <strong>{breakerData.harvestedWithinOneWeekPercent.toFixed(0)}%</strong>
                           </div>
                         </div>
@@ -274,7 +297,7 @@ export function ProjectionsPage() {
                         <div className="breaker-stat-row">
                           <span>Base projection</span>
                           <strong>
-                            {baseKg > 0 ? baseKg.toLocaleString(undefined, { maximumFractionDigits: 0 }) : '—'} kg
+                            {baseKg > 0 ? n(baseKg) : '—'} kg
                             <span className="breaker-cases-sub"> ({casesLabel(baseKg, caseKg)})</span>
                           </strong>
                         </div>
@@ -282,14 +305,28 @@ export function ProjectionsPage() {
                           <span>+ Breaker adjust</span>
                           <strong className="breaker-adj-value">
                             {breakerData.nextWeekBreakerKgEstimate > 0
-                              ? `+${breakerData.nextWeekBreakerKgEstimate.toLocaleString(undefined, { maximumFractionDigits: 0 })} kg`
+                              ? `+${n(breakerData.nextWeekBreakerKgEstimate)} kg`
+                              : breakerData.adjustmentSuppressed ? 'not applied'
                               : breakerData.missingAfwWarning ? 'no AFW/g' : '—'}
                           </strong>
                         </div>
+                        {breakerData.nextWeekBreakerKgEstimate > 0 && (
+                          <div className="breaker-adj-note">
+                            {breakerData.harvestedWithinOneWeekPercent.toFixed(0)}% applied conversion rate ×{' '}
+                            {n(breakerData.nextWeekBreakerKgEstimateRaw)} kg raw estimate
+                            (historical 1-week harvest rate, n={breakerData.sampleSize})
+                          </div>
+                        )}
+                        {breakerData.adjustmentSuppressed && (
+                          <div className="breaker-warning">
+                            Sample too small (n={breakerData.sampleSize} &lt; {breakerData.minSampleSizeForAdjustment}) —
+                            raw estimate would be {n(breakerData.nextWeekBreakerKgEstimateRaw)} kg but is not applied
+                          </div>
+                        )}
                         <div className="breaker-stat-row breaker-total-row">
                           <span>= Adjusted total</span>
                           <strong className="breaker-total-value">
-                            {adjustedKg > 0 ? adjustedKg.toLocaleString(undefined, { maximumFractionDigits: 0 }) : '—'} kg
+                            {adjustedKg > 0 ? n(adjustedKg) : '—'} kg
                             <span className="breaker-cases-sub"> ({casesLabel(adjustedKg, caseKg)})</span>
                           </strong>
                         </div>
@@ -298,6 +335,76 @@ export function ProjectionsPage() {
                         )}
                       </div>
                     </div>
+
+                    {showBreakerDetails && (
+                      <div className="breaker-details">
+                        <div className="breaker-details-block">
+                          <div className="breaker-details-title">Breaker adjustment — worked calculation</div>
+                          <table className="breaker-details-table">
+                            <tbody>
+                              <tr><td>Sampled breaker nodes (W{currentWeek})</td><td>{breakerData.currentWeekBreakerCount}</td></tr>
+                              <tr><td>Measured stems (W{currentWeek})</td><td>{breakerData.currentWeekMeasuredStemCount}</td></tr>
+                              <tr><td>Variety total configured stems</td><td>{n(breakerData.varietyTotalStemCount)}</td></tr>
+                              <tr><td>Variety area</td><td>{n(breakerData.varietyAreaM2)} m²</td></tr>
+                              <tr><td>Breaker fruit / m²</td><td>{breakerData.currentWeekBreakerFruitPerM2.toFixed(3)}</td></tr>
+                              <tr><td>AFW used (W{nextWeek})</td><td>{breakerData.nextWeekAfw > 0 ? `${breakerData.nextWeekAfw} g` : 'not set'}</td></tr>
+                              <tr><td>Raw estimated kg (before scaling)</td><td>{n(breakerData.nextWeekBreakerKgEstimateRaw)} kg</td></tr>
+                              <tr><td>Historical 1-week harvest rate</td><td>{breakerData.harvestedWithinOneWeekPercent.toFixed(0)}%</td></tr>
+                              <tr><td>Historical sample count</td><td>n={breakerData.sampleSize} (min required: {breakerData.minSampleSizeForAdjustment})</td></tr>
+                              <tr><td>Applied adjustment kg</td><td>{n(breakerData.nextWeekBreakerKgEstimate)} kg</td></tr>
+                              <tr><td>Suppressed?</td>
+                                <td>
+                                  {breakerData.adjustmentSuppressed
+                                    ? `Yes — sample below minimum (n=${breakerData.sampleSize} < ${breakerData.minSampleSizeForAdjustment})`
+                                    : 'No'}
+                                </td>
+                              </tr>
+                            </tbody>
+                          </table>
+                          <pre className="breaker-details-formula">{
+`breaker fruit/m² = (breaker nodes / measured stems) × total stems / area
+                  = (${breakerData.currentWeekBreakerCount} / ${breakerData.currentWeekMeasuredStemCount}) × ${n(breakerData.varietyTotalStemCount)} / ${n(breakerData.varietyAreaM2)}
+                  = ${breakerData.currentWeekBreakerFruitPerM2.toFixed(3)} /m²
+
+raw estimated kg = breaker fruit/m² × area × AFW / 1000
+                  = ${breakerData.currentWeekBreakerFruitPerM2.toFixed(3)} × ${n(breakerData.varietyAreaM2)} × ${breakerData.nextWeekAfw}g / 1000
+                  = ${n(breakerData.nextWeekBreakerKgEstimateRaw)} kg
+
+applied kg = raw estimated kg × historical 1-week harvest rate (only if n ≥ ${breakerData.minSampleSizeForAdjustment})
+           = ${n(breakerData.nextWeekBreakerKgEstimateRaw)} × ${breakerData.harvestedWithinOneWeekPercent.toFixed(0)}%${breakerData.adjustmentSuppressed ? '  →  suppressed (n too small)' : ''}
+           = ${n(breakerData.nextWeekBreakerKgEstimate)} kg`
+                          }</pre>
+                        </div>
+
+                        <div className="breaker-details-block">
+                          <div className="breaker-details-title">Harvested estimate — worked calculation (display only)</div>
+                          <table className="breaker-details-table">
+                            <tbody>
+                              <tr><td>Harvested nodes (W{currentWeek})</td><td>{breakerData.currentWeekHarvestedCount}</td></tr>
+                              <tr><td>Measured stems (W{currentWeek})</td><td>{breakerData.currentWeekMeasuredStemCount}</td></tr>
+                              <tr><td>Variety total configured stems</td><td>{n(breakerData.varietyTotalStemCount)}</td></tr>
+                              <tr><td>Variety area</td><td>{n(breakerData.varietyAreaM2)} m²</td></tr>
+                              <tr><td>Harvested fruit / m²</td><td>{breakerData.currentWeekHarvestedFruitPerM2.toFixed(3)}</td></tr>
+                              <tr><td>AFW used (W{currentWeek}, current week)</td><td>{breakerData.currentWeekAfw > 0 ? `${breakerData.currentWeekAfw} g` : 'not set'}</td></tr>
+                              <tr><td>Estimated harvested kg</td><td>{n(breakerData.currentWeekHarvestedKgEstimate)} kg</td></tr>
+                            </tbody>
+                          </table>
+                          <pre className="breaker-details-formula">{
+`harvested fruit/m² = (harvested nodes / measured stems) × total stems / area
+                    = (${breakerData.currentWeekHarvestedCount} / ${breakerData.currentWeekMeasuredStemCount}) × ${n(breakerData.varietyTotalStemCount)} / ${n(breakerData.varietyAreaM2)}
+                    = ${breakerData.currentWeekHarvestedFruitPerM2.toFixed(3)} /m²
+
+estimated harvested kg = harvested fruit/m² × area × AFW / 1000
+                        = ${breakerData.currentWeekHarvestedFruitPerM2.toFixed(3)} × ${n(breakerData.varietyAreaM2)} × ${breakerData.currentWeekAfw}g / 1000
+                        = ${n(breakerData.currentWeekHarvestedKgEstimate)} kg
+
+Same variety area and the same current-week AFW as the breaker section above
+(AFW keyed by week ${currentWeek}, not week ${nextWeek} — this fruit is already harvested).
+Used for display only; not fed into historical learning or projection correction.`
+                          }</pre>
+                        </div>
+                      </div>
+                    )}
                   </div>
                 );
               })()}

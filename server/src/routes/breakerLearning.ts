@@ -4,6 +4,10 @@ import { chunkArray } from '../lib/chunkArray';
 
 const router = Router();
 
+// Below this many historical breaker→harvest observations, the learned
+// conversion timing isn't trustworthy enough to drive a kg adjustment.
+const MIN_SAMPLE_SIZE_FOR_ADJUSTMENT = 5;
+
 function getIsoWeek(d: Date): number {
   const date = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
   const day = date.getUTCDay() || 7;
@@ -81,8 +85,10 @@ router.get('/', async (req: Request, res: Response, next: NextFunction) => {
     const rowIds = (rows ?? []).map((r: { id: string }) => r.id);
 
     let breakerCount = 0;
+    let harvestedCount = 0;
     let measuredStemCount = 0;
     let breakerFruitPerM2 = 0;
+    let harvestedFruitPerM2 = 0;
 
     if (rowIds.length > 0) {
       const { data: stems } = await supabase
@@ -123,6 +129,9 @@ router.get('/', async (req: Request, res: Response, next: NextFunction) => {
           breakerCount = statuses.filter(
             (s: { status: string }) => s.status === 'BreakerFruit'
           ).length;
+          harvestedCount = statuses.filter(
+            (s: { status: string }) => s.status === 'Harvested'
+          ).length;
 
           const stemSet = new Set(
             (statuses ?? [])
@@ -133,6 +142,7 @@ router.get('/', async (req: Request, res: Response, next: NextFunction) => {
 
           if (measuredStemCount > 0 && totalStemCount > 0 && areaM2 > 0) {
             breakerFruitPerM2 = (breakerCount / measuredStemCount) * totalStemCount / areaM2;
+            harvestedFruitPerM2 = (harvestedCount / measuredStemCount) * totalStemCount / areaM2;
           }
         }
       }
@@ -149,23 +159,68 @@ router.get('/', async (req: Request, res: Response, next: NextFunction) => {
 
     const nextWeekAfw = (weightRow as { weight_grams: number } | null)?.weight_grams ?? 0;
     const missingAfwWarning = nextWeekAfw === 0;
-    const nextWeekBreakerKgEstimate =
+
+    // Raw estimate assumes 100% of currently-breaking fruit converts to
+    // harvest by next week. Scale it down by the historical
+    // harvestedWithinOneWeekPercent conversion rate (learned from
+    // fruit_instances) so a variety whose breaker fruit typically takes
+    // longer than a week doesn't get the full amount dumped into next week's
+    // projection. Below MIN_SAMPLE_SIZE_FOR_ADJUSTMENT observations that
+    // learned rate isn't trustworthy, so no adjustment is applied at all.
+    const hasEnoughSample = sampleSize >= MIN_SAMPLE_SIZE_FOR_ADJUSTMENT;
+    const conversionRateScalar = harvestedWithinOneWeekPercent / 100;
+
+    const nextWeekBreakerKgEstimateRaw =
       breakerFruitPerM2 > 0 && nextWeekAfw > 0 && areaM2 > 0
         ? Math.round((breakerFruitPerM2 * areaM2 * nextWeekAfw) / 1000 * 10) / 10
+        : 0;
+
+    const nextWeekBreakerKgEstimate = hasEnoughSample
+      ? Math.round(nextWeekBreakerKgEstimateRaw * conversionRateScalar * 10) / 10
+      : 0;
+
+    const adjustmentSuppressed = nextWeekBreakerKgEstimateRaw > 0 && !hasEnoughSample;
+
+    // ── 5. Current-week Harvested kg (display only — not fed into historical
+    // learning or the breaker adjustment above; those are computed separately).
+    const { data: currentWeightRow } = await supabase
+      .from('fruit_weight_by_week')
+      .select('weight_grams')
+      .eq('variety_id', varietyId as string)
+      .eq('year', yearNum)
+      .eq('week_number', queryWeek)
+      .maybeSingle();
+
+    const currentWeekAfw = (currentWeightRow as { weight_grams: number } | null)?.weight_grams ?? 0;
+    const currentWeekHarvestedKgEstimate =
+      harvestedFruitPerM2 > 0 && currentWeekAfw > 0 && areaM2 > 0
+        ? Math.round((harvestedFruitPerM2 * areaM2 * currentWeekAfw) / 1000 * 10) / 10
         : 0;
 
     res.json({
       varietyId,
       year: yearNum,
       currentWeek: queryWeek,
+      nextWeek,
       avgBreakerToHarvestWeeks,
       harvestedWithinOneWeekPercent,
       sampleSize,
+      varietyTotalStemCount: totalStemCount,
+      varietyAreaM2: areaM2,
       currentWeekBreakerCount: breakerCount,
       currentWeekMeasuredStemCount: measuredStemCount,
       currentWeekBreakerFruitPerM2: Math.round(breakerFruitPerM2 * 1000) / 1000,
+      nextWeekAfw,
       nextWeekBreakerKgEstimate,
+      nextWeekBreakerKgEstimateRaw,
+      minSampleSizeForAdjustment: MIN_SAMPLE_SIZE_FOR_ADJUSTMENT,
+      adjustmentSuppressed,
       missingAfwWarning,
+      currentWeekHarvestedCount: harvestedCount,
+      currentWeekHarvestedFruitPerM2: Math.round(harvestedFruitPerM2 * 1000) / 1000,
+      currentWeekAfw,
+      currentWeekHarvestedKgEstimate,
+      missingHarvestedAfwWarning: harvestedFruitPerM2 > 0 && currentWeekAfw === 0,
     });
   } catch (e) {
     next(e);

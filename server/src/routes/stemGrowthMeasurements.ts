@@ -24,6 +24,30 @@ router.get('/', async (req: Request, res: Response, next: NextFunction) => {
   }
 });
 
+// GET /stem-growth-measurements/history?stemId=
+// Returns every reading for a stem that carries a top_node_number, ordered
+// chronologically, for rendering the Veg Measurement Stem. Rows saved before
+// top_node_number existed (null) are intentionally excluded rather than guessed.
+router.get('/history', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const { stemId } = req.query;
+    if (!stemId) {
+      return res.status(400).json({ error: 'stemId is required' });
+    }
+    const { data, error } = await supabase
+      .from('stem_growth_measurements')
+      .select('*')
+      .eq('measurement_stem_id', stemId as string)
+      .not('top_node_number', 'is', null)
+      .order('year', { ascending: true })
+      .order('week_number', { ascending: true });
+    if (error) throw new Error(error.message);
+    res.json(data ?? []);
+  } catch (e) {
+    next(e);
+  }
+});
+
 // POST /stem-growth-measurements/upsert
 router.post('/upsert', async (req: Request, res: Response, next: NextFunction) => {
   try {
@@ -52,6 +76,21 @@ router.post('/upsert', async (req: Request, res: Response, next: NextFunction) =
       : stemData.measurement_rows;
     if (!row) return res.status(404).json({ error: 'Row not found for stem' });
 
+    // Snapshot the current top (highest-numbered active, non-side-shoot) main-stem
+    // node so this reading can later be positioned against the plant stem's node
+    // numbering. No user input required — this reflects the stem's state right now.
+    const { data: topNodeRow, error: topNodeError } = await supabase
+      .from('plant_nodes')
+      .select('node_number')
+      .eq('measurement_stem_id', stemId as string)
+      .eq('is_active', true)
+      .eq('is_side_shoot', false)
+      .order('node_number', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (topNodeError) throw new Error(topNodeError.message);
+    const topNodeNumber = topNodeRow?.node_number ?? null;
+
     const { data, error } = await supabase
       .from('stem_growth_measurements')
       .upsert(
@@ -65,6 +104,7 @@ router.post('/upsert', async (req: Request, res: Response, next: NextFunction) =
           growth_cm: Number(growthCm),
           notes: notes ?? null,
           organization_id: organization_id ?? null,
+          top_node_number: topNodeNumber,
           updated_at: new Date().toISOString(),
         },
         { onConflict: 'measurement_stem_id,year,week_number' }

@@ -336,7 +336,7 @@ export const breakerLearningApi = {
 // Ripening actuals (actual set→harvest timing from fruit_instances)
 export const ripeningActualsApi = {
   get: (varietyId: string, year: number) =>
-    request<import('../types').RipeningActualsRow[]>(
+    request<import('../types').RipeningActualsResult>(
       `/ripening-actuals?varietyId=${varietyId}&year=${year}`
     ),
 };
@@ -354,6 +354,10 @@ export const stemGrowthApi = {
   get: (stemId: string, year: number, weekNumber: number) =>
     request<import('../types').StemGrowthMeasurement | null>(
       `/stem-growth-measurements?stemId=${stemId}&year=${year}&weekNumber=${weekNumber}`
+    ),
+  history: (stemId: string) =>
+    request<import('../types').StemGrowthMeasurement[]>(
+      `/stem-growth-measurements/history?stemId=${stemId}`
     ),
   upsert: (data: Record<string, unknown>) =>
     request<import('../types').StemGrowthMeasurement>('/stem-growth-measurements/upsert', {
