@@ -1,7 +1,8 @@
 import { useState, useEffect, useMemo } from 'react';
-import { Season, Variety, HarvestProjectionsResult, BreakerLearningResult } from '../types';
-import { yearsApi, varietiesApi, harvestProjectionsApi, breakerLearningApi } from '../services/api';
+import { Season, Variety, HarvestProjectionsResult, BreakerLearningResult, VarietyClimateExposureResult, ClimateFeatureConfig } from '../types';
+import { yearsApi, varietiesApi, harvestProjectionsApi, breakerLearningApi, varietyClimateFeaturesApi, climateFeatureConfigApi } from '../services/api';
 import { defaultYear, uniqueYears } from '../utils/years';
+import { ProjectionsClimateContext } from '../components/ProjectionsClimateContext';
 
 export function ProjectionsPage() {
   const [seasons, setSeasons] = useState<Season[]>([]);
@@ -56,6 +57,43 @@ export function ProjectionsPage() {
       .then(setBreakerData)
       .catch(() => setBreakerData(null));
   }, [selectedYear, selectedVarietyId]);
+
+  // Climate Context — a rolling "last 7 days vs. prior 7 days" snapshot for
+  // whichever single variety is selected. Purely observational: it never
+  // reads from or writes into `data` (the projection result), so it cannot
+  // affect any projected kg. Only fetched when one variety is selected —
+  // "All Varieties" has no single climate to show, same gate as the Breaker
+  // Adjustment card above.
+  const [climateCurrent, setClimateCurrent] = useState<VarietyClimateExposureResult | null>(null);
+  const [climatePrevious, setClimatePrevious] = useState<VarietyClimateExposureResult | null>(null);
+  const [climateConfig, setClimateConfig] = useState<ClimateFeatureConfig | null>(null);
+
+  useEffect(() => {
+    if (!selectedVarietyId) {
+      setClimateCurrent(null);
+      setClimatePrevious(null);
+      return;
+    }
+    const now = new Date();
+    const sevenDaysAgo = new Date(now.getTime() - 7 * 86400000);
+    const fourteenDaysAgo = new Date(now.getTime() - 14 * 86400000);
+    Promise.all([
+      varietyClimateFeaturesApi.exposure(selectedVarietyId, sevenDaysAgo.toISOString(), now.toISOString()),
+      varietyClimateFeaturesApi.exposure(selectedVarietyId, fourteenDaysAgo.toISOString(), sevenDaysAgo.toISOString()),
+    ])
+      .then(([current, previous]) => {
+        setClimateCurrent(current);
+        setClimatePrevious(previous);
+      })
+      .catch(() => {
+        setClimateCurrent(null);
+        setClimatePrevious(null);
+      });
+  }, [selectedVarietyId]);
+
+  useEffect(() => {
+    climateFeatureConfigApi.get().then(setClimateConfig).catch(() => {});
+  }, []);
 
   // Keep the Case kg input in sync with whichever variety is selected
   useEffect(() => {
@@ -408,6 +446,11 @@ Used for display only; not fed into historical learning or projection correction
                   </div>
                 );
               })()}
+
+              {/* Climate Context — observational only, see effect above for the fetch/gating */}
+              {selectedVarietyId && climateCurrent && climatePrevious && (
+                <ProjectionsClimateContext current={climateCurrent} previous={climatePrevious} config={climateConfig} />
+              )}
 
               {/* Summary cards row */}
               {colors.length > 1 && (

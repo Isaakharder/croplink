@@ -24,6 +24,11 @@ import stemGrowthMeasurementsRouter from './routes/stemGrowthMeasurements';
 import blocksRouter from './routes/blocks';
 import blockClimateSummaryRouter from './routes/blockClimateSummary';
 import climateImportsRouter from './routes/climateImports';
+import climateImportBatchesRouter from './routes/climateImportBatches';
+import varietyClimateHourlyRouter from './routes/varietyClimateHourly';
+import varietyClimateFeaturesRouter from './routes/varietyClimateFeatures';
+import climateFeatureConfigRouter from './routes/climateFeatureConfig';
+import climateTrainingDatasetRouter from './routes/climateTrainingDataset';
 import phasesRouter from './routes/phases';
 import zonesRouter from './routes/zones';
 import varietyZonesRouter from './routes/varietyZones';
@@ -58,10 +63,15 @@ app.use(`${api}/harvest-projections`, harvestProjectionsRouter);
 app.use(`${api}/ripening-actuals`, ripeningActualsRouter);
 app.use(`${api}/breaker-learning`, breakerLearningRouter);
 app.use(`${api}/stem-growth-measurements`, stemGrowthMeasurementsRouter);
+app.use(`${api}/climate-training-dataset`, climateTrainingDatasetRouter);
 
 const climateApi = '/api/climate';
 app.use(`${climateApi}/blocks`, blocksRouter);
 app.use(`${climateApi}/block-summary`, blockClimateSummaryRouter);
+app.use(`${climateApi}/import-batches`, climateImportBatchesRouter);
+app.use(`${climateApi}/variety-hourly`, varietyClimateHourlyRouter);
+app.use(`${climateApi}/variety-features`, varietyClimateFeaturesRouter);
+app.use(`${climateApi}/feature-config`, climateFeatureConfigRouter);
 
 app.use('/api/v1/climate/imports', climateImportsRouter);
 

@@ -1087,6 +1087,16 @@ table tr.report-group__header-row:hover td {
   color: var(--green-700);
 }
 
+.row-expand-toggle--climate {
+  font-size: 10px;
+  font-weight: 500;
+  color: var(--blue-500);
+}
+
+.row-expand-toggle--climate:hover {
+  color: #1d4ed8;
+}
+
 .row-expand-chevron {
   display: inline-block;
   font-size: 9px;
@@ -1135,6 +1145,35 @@ table tr.report-group__header-row:hover td {
   font-size: 11px;
   color: #b45309;
   margin-bottom: 10px;
+}
+
+/* Calculator page — per-set-week Climate Exposure section */
+.climate-exposure-windows {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.climate-exposure-window-section:not(:first-child) {
+  padding-top: 16px;
+  border-top: 1px solid var(--gray-200);
+}
+
+.climate-exposure-window-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+
+.climate-exposure-open-link {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--green-700);
+}
+
+.climate-exposure-open-link:hover {
+  text-decoration: underline;
 }
 
 .row-detail-table-scroll {
@@ -2516,6 +2555,23 @@ table tr.report-group__header-row:hover td {
   font-style: italic;
 }
 
+.climate-context-card {
+  margin-bottom: 20px;
+}
+
+.climate-context-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 12px;
+}
+
+.climate-context-band-bar {
+  margin-top: 16px;
+}
+
 .breaker-adj-note {
   margin-top: -2px;
   margin-bottom: 4px;
@@ -2606,4 +2662,419 @@ table tr.report-group__header-row:hover td {
   padding: 10px 14px;
   font-size: 13px;
   margin-bottom: 16px;
+}
+
+.warning-banner {
+  background: var(--yellow-100);
+  color: #92400e;
+  border-radius: 6px;
+  padding: 8px 14px;
+  font-size: 12px;
+  margin-bottom: 12px;
+}
+
+.error-state {
+  color: var(--red-500);
+  font-size: 13px;
+  padding: 16px;
+}
+
+.mt-2 { margin-top: 8px; }
+
+/* Soft informational banner — auto-resolved, no action needed (distinct from
+   warning-banner/alert-error, which mean "this needs your attention"). */
+.climate-info-banner {
+  background: var(--blue-100);
+  color: #1e3a8a;
+  border-radius: 6px;
+  padding: 10px 14px;
+  font-size: 12px;
+  margin-bottom: 12px;
+}
+
+.climate-info-banner p {
+  margin: 4px 0;
+}
+
+.climate-info-banner-title {
+  font-weight: 700;
+  margin-bottom: 2px;
+}
+
+.climate-info-banner-resolved {
+  color: var(--green-700);
+  font-weight: 600;
+}
+
+.climate-expand-toggle {
+  font-size: 11px;
+  font-weight: 600;
+  color: inherit;
+  background: rgba(0, 0, 0, 0.06);
+  border: none;
+  border-radius: 4px;
+  padding: 3px 8px;
+  cursor: pointer;
+  margin-top: 4px;
+}
+
+.climate-expand-toggle:hover {
+  background: rgba(0, 0, 0, 0.12);
+}
+
+.climate-warning-file-list {
+  margin: 6px 0 0;
+  padding-left: 18px;
+  font-size: 11px;
+}
+
+.climate-warning-file-list li {
+  padding: 1px 0;
+}
+
+.climate-duplicate-timestamp-row {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px dashed rgba(0, 0, 0, 0.15);
+  font-size: 11px;
+}
+
+/* ── Climate import preview / conflicts ─────────────────────────────────── */
+
+.climate-preview-stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
+  gap: 8px 20px;
+  margin-bottom: 12px;
+}
+
+.climate-preview-stats > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 12px;
+}
+
+.climate-preview-stats span { color: var(--gray-500); }
+.climate-preview-stats strong { color: var(--gray-800); font-variant-numeric: tabular-nums; }
+
+.climate-preview-range {
+  font-size: 12px;
+  color: var(--gray-500);
+  margin-bottom: 12px;
+}
+
+.climate-preview-section-title {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--gray-600);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  margin: 14px 0 8px;
+}
+
+.climate-preview-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.climate-preview-table th {
+  text-align: left;
+  padding: 5px 8px;
+  background: var(--gray-50);
+  color: var(--gray-500);
+  border-bottom: 1px solid var(--gray-200);
+}
+
+.climate-preview-table td {
+  padding: 5px 8px;
+  border-bottom: 1px solid var(--gray-100);
+}
+
+.climate-preview-files-scroll {
+  max-height: 260px;
+  overflow-y: auto;
+  border: 1px solid var(--gray-200);
+  border-radius: 6px;
+}
+
+.climate-preview-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 16px;
+}
+
+.climate-conflicts {
+  margin-top: 12px;
+  border-top: 1px solid var(--gray-200);
+  padding-top: 8px;
+}
+
+.climate-conflict-row {
+  padding: 8px 0;
+  border-bottom: 1px solid var(--gray-100);
+  font-size: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.climate-conflict-values {
+  color: var(--gray-500);
+  font-family: monospace;
+  font-size: 11px;
+}
+
+.climate-conflict-row label {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-right: 16px;
+  cursor: pointer;
+}
+
+.climate-zone-count {
+  color: var(--gray-400);
+  font-size: 11px;
+}
+
+.climate-warnings-cell {
+  color: #b45309;
+  font-size: 11px;
+  max-width: 240px;
+}
+
+/* ── Climate chart ───────────────────────────────────────────────────────── */
+
+.climate-chart-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.climate-chart-svg {
+  width: 100%;
+  height: auto;
+  cursor: crosshair;
+}
+
+.climate-chart-grid {
+  stroke: var(--gray-100);
+  stroke-width: 1;
+}
+
+.climate-chart-axis-label {
+  font-size: 10px;
+  fill: var(--gray-400);
+}
+
+.climate-chart-line {
+  stroke: var(--green-600);
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.climate-chart-dot {
+  fill: var(--green-600);
+}
+
+.climate-chart-crosshair {
+  stroke: var(--gray-300);
+  stroke-width: 1;
+  stroke-dasharray: 3 3;
+}
+
+.climate-chart-hover-dot {
+  fill: var(--white);
+  stroke: var(--green-700);
+  stroke-width: 2;
+}
+
+.climate-chart-tooltip {
+  font-size: 12px;
+  color: var(--gray-500);
+  text-align: center;
+}
+
+/* Climate Analysis / Crop Exposure — generic LineChart (bars/ribbons need
+   per-instance color set inline via style=, these classes only carry shape). */
+.climate-lc-line {
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.climate-lc-dot {
+  stroke: var(--white);
+  stroke-width: 2;
+}
+
+.climate-lc-bar {
+  rx: 1;
+}
+
+.climate-chart-shade {
+  fill: var(--yellow-100);
+  opacity: 0.5;
+}
+
+.climate-small-multiple {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.climate-small-multiple-panel {
+  border-top: 1px solid var(--gray-100);
+  padding-top: 8px;
+}
+
+.climate-small-multiple-panel:first-child {
+  border-top: none;
+  padding-top: 0;
+}
+
+.climate-small-multiple-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--gray-500);
+  margin-bottom: 4px;
+}
+
+/* VPD band bar */
+.vpd-band-bar-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.vpd-band-bar {
+  display: flex;
+  height: 18px;
+  border-radius: 4px;
+  overflow: hidden;
+  background: var(--gray-100);
+}
+
+.vpd-band-bar-empty {
+  width: 100%;
+  height: 100%;
+}
+
+.vpd-band-bar-segment {
+  height: 100%;
+  min-width: 2px;
+}
+
+.vpd-band-bar-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  font-size: 12px;
+  color: var(--gray-600);
+}
+
+.vpd-band-bar-legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.vpd-band-bar-legend-swatch {
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+  display: inline-block;
+}
+
+/* Coverage badge/banner — deliberately loud when coverage is low so a
+   sparse-data result can't be mistaken for a trustworthy one. */
+.climate-coverage-banner {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 16px;
+}
+
+.climate-coverage-banner-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.climate-coverage-banner-hours {
+  color: var(--gray-500);
+  font-size: 12px;
+}
+
+.climate-coverage-missing-hours summary {
+  cursor: pointer;
+  font-size: 12px;
+  color: inherit;
+}
+
+.climate-warning-file-list-scroll {
+  max-height: 160px;
+  overflow-y: auto;
+  margin-top: 6px;
+}
+
+.climate-coverage-muted {
+  opacity: 0.5;
+  filter: grayscale(0.3);
+}
+
+.climate-coverage-caution {
+  margin-bottom: 12px;
+}
+
+.climate-coverage-caution-pct {
+  font-weight: 400;
+  opacity: 0.85;
+}
+
+/* Page tabs (Climate page: Import / Analysis / Crop Exposure) */
+.page-tabs {
+  display: flex;
+  gap: 4px;
+  border-bottom: 1px solid var(--gray-200);
+  margin-bottom: 16px;
+}
+
+.page-tab {
+  padding: 8px 16px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--gray-500);
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  cursor: pointer;
+  margin-bottom: -1px;
+}
+
+.page-tab:hover {
+  color: var(--gray-800);
+}
+
+.page-tab.active {
+  color: var(--green-700);
+  border-bottom-color: var(--green-600);
+}
+
+.climate-cohort-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  font-size: 13px;
+  color: var(--gray-600);
+  margin-bottom: 12px;
+}
+
+.climate-cohort-summary strong {
+  color: var(--gray-900);
 }

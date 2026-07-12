@@ -409,6 +409,89 @@ export const blockClimateSummaryApi = {
   },
 };
 
+// Multipart upload — must NOT set a JSON content-type (the browser sets its
+// own multipart boundary), so this bypasses the shared `climateRequest` helper.
+async function climateUploadRequest<T>(path: string, body: FormData): Promise<T> {
+  const res = await fetch(`${CLIMATE_BASE}${path}`, { method: 'POST', body });
+  if (!res.ok) {
+    const errBody = await res.json().catch(() => ({}));
+    throw new Error(errBody.error ?? `Request failed: ${res.status}`);
+  }
+  return res.json();
+}
+
+// Climate CSV import batches (manual multi-file upload → preview → confirm)
+export const climateImportBatchesApi = {
+  upload: (files: File[]) => {
+    const form = new FormData();
+    for (const f of files) form.append('files', f);
+    return climateUploadRequest<import('../types').ClimateImportPreview>('/import-batches', form);
+  },
+  preview: (batchId: string) =>
+    climateRequest<import('../types').ClimateImportPreview>(`/import-batches/${batchId}/preview`),
+  confirm: (batchId: string, resolutions?: Record<string, string>) =>
+    climateRequest<import('../types').ClimateImportConfirmResult>(`/import-batches/${batchId}/confirm`, {
+      method: 'POST',
+      body: JSON.stringify({ resolutions: resolutions ?? {} }),
+    }),
+  history: () => climateRequest<import('../types').ClimateImportBatch[]>('/import-batches'),
+  cancel: (batchId: string) => climateRequest<void>(`/import-batches/${batchId}`, { method: 'DELETE' }),
+};
+
+// Corrections for already-committed imports (e.g. a timestamp-resolution fix
+// discovered after commit) — dry-run preview, then an explicit apply.
+export const climateCorrectionsApi = {
+  preview: (filename: string) =>
+    climateRequest<import('../types').ClimateTimestampCorrectionPreview>('/import-batches/corrections/preview', {
+      method: 'POST',
+      body: JSON.stringify({ filename }),
+    }),
+  apply: (filename: string) =>
+    climateRequest<import('../types').ClimateTimestampCorrectionResult>('/import-batches/corrections/apply', {
+      method: 'POST',
+      body: JSON.stringify({ filename }),
+    }),
+};
+
+export const varietyClimateHourlyApi = {
+  get: (varietyId: string, granularity: import('../types').ClimateGranularity, start?: string, end?: string) => {
+    const params = new URLSearchParams({ varietyId, granularity });
+    if (start) params.set('start', start);
+    if (end) params.set('end', end);
+    return climateRequest<import('../types').VarietyClimateHourlyResult>(`/variety-hourly?${params.toString()}`);
+  },
+};
+
+// Deterministic climate feature engine (degree-hours, VPD, radiation, CO2/light
+// context, irrigation, EC/pH) — derived from variety_climate_hourly, never
+// recomputed on the client.
+export const varietyClimateFeaturesApi = {
+  get: (varietyId: string, granularity: import('../types').ClimateGranularity, start?: string, end?: string) => {
+    const params = new URLSearchParams({ varietyId, granularity });
+    if (start) params.set('start', start);
+    if (end) params.set('end', end);
+    return climateRequest<import('../types').VarietyClimateFeatureResult>(`/variety-features?${params.toString()}`);
+  },
+  exposure: (varietyId: string, start: string, end: string) => {
+    const params = new URLSearchParams({ varietyId, start, end });
+    return climateRequest<import('../types').VarietyClimateExposureResult>(`/variety-features/exposure?${params.toString()}`);
+  },
+};
+
+// Feature-engine config (VPD band thresholds, degree-hour base/cap) — fetched
+// so the UI never hardcodes a second copy of these agronomy constants.
+export const climateFeatureConfigApi = {
+  get: () => climateRequest<import('../types').ClimateFeatureConfig>('/feature-config'),
+};
+
+// Phase 2 training dataset (fruit-instance / set-week-cohort climate exposure) — read-only, not consumed by any model yet.
+export const climateTrainingDatasetApi = {
+  get: (varietyId: string, year: number, grain: import('../types').ClimateTrainingDatasetGrain) =>
+    request<import('../types').ClimateTrainingDatasetResult>(
+      `/climate-training-dataset?varietyId=${varietyId}&year=${year}&grain=${grain}`
+    ),
+};
+
 // GrowLink Connection — base URL + integration key used to call GrowLink's API.
 // The secret key is write-only from the client's perspective: save/test send it,
 // but get() never receives it back (only has_key/masked_key).

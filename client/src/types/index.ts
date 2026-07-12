@@ -389,6 +389,359 @@ export interface BlockClimateSummary {
   updated_at: string;
 }
 
+// ── Variety-level hourly climate pipeline (manual CSV upload) ──────────────
+
+export interface ClimateImportBatch {
+  id: string;
+  organization_id: string | null;
+  status: 'pending' | 'committed' | 'failed' | 'cancelled';
+  file_count: number;
+  created_at: string;
+  updated_at: string;
+  committed_at: string | null;
+  error_message: string | null;
+}
+
+export interface ClimateImportStagedFileSummary {
+  filename: string;
+  status: 'parsed' | 'duplicate' | 'error' | 'repair';
+  errorMessage: string | null;
+  resolvedMeasuredAt: string | null;
+  weekNumber: number | null;
+  timestampConflict: boolean;
+  timestampWarning: string | null;
+  /** True only for a >1 hour System-Time-vs-filename discrepancy — needs explicit confirmation before import. */
+  hourConflict: boolean;
+  hourWarning: string | null;
+  hourDifferenceMinutes: number | null;
+  zoneCount: number;
+}
+
+export interface ClimateHourWarning {
+  filename: string;
+  warning: string;
+  hourConflict: boolean;
+  hourDifferenceMinutes: number | null;
+}
+
+export interface ClimateRepairDetail {
+  filename: string;
+  previousWrongMeasuredAt: string | null;
+  correctedMeasuredAt: string | null;
+}
+
+export interface ClimateImportVarietyMapping {
+  varietyName: string;
+  zoneLabels: string[];
+}
+
+export interface ClimateDuplicateCandidate {
+  stagedFileId: string;
+  filename: string;
+  value: number;
+}
+
+export interface ClimateDuplicateTimestampDetail {
+  measuredAt: string;
+  files: string[];
+  identicalReadingCount: number;
+  conflictingReadingCount: number;
+  conflictingMetricsZones: { zoneLabel: string; metricName: string; candidates: ClimateDuplicateCandidate[] }[];
+}
+
+export interface ClimateImportPreview {
+  batchId: string;
+  filesParsed: number;
+  filesFailed: number;
+  filesDuplicate: number;
+  filesRepair: number;
+  repairDetails: ClimateRepairDetail[];
+  files: ClimateImportStagedFileSummary[];
+  timestampRange: { start: string; end: string } | null;
+  uniqueTimestampCount: number;
+  duplicateTimestamps: string[];
+  identicalDuplicateTimestampCount: number;
+  conflictingDuplicateTimestampCount: number;
+  duplicateTimestampDetails: ClimateDuplicateTimestampDetail[];
+  hasUnresolvedDuplicateConflicts: boolean;
+  missingHours: number;
+  timestampWarnings: { filename: string; warning: string | null }[];
+  hourWarnings: ClimateHourWarning[];
+  hasUnresolvedHourConflicts: boolean;
+  detectedZones: string[];
+  detectedMetrics: string[];
+  unmatchedZones: string[];
+  varietyMappings: ClimateImportVarietyMapping[];
+  zonesWithoutVariety: string[];
+  expectedVarietyHourRows: number;
+  expectedPhaseHourRows: number;
+}
+
+export interface ClimateImportConflict {
+  conflictId: string;
+  kind: 'reading' | 'variety_hourly' | 'batch_duplicate' | 'hour_discrepancy';
+  description: string;
+  existingValue: unknown;
+  newValue: unknown;
+  candidates?: ClimateDuplicateCandidate[];
+}
+
+export interface ClimateImportConfirmResult {
+  status: 'conflicts' | 'committed' | 'failed';
+  conflicts?: ClimateImportConflict[];
+  summary?: { totalReadings: number; newReadings: number; newVarietyHourly: number; newPhaseHourly: number; conflictCount: number; skippedIdenticalCount?: number };
+  readingsCommitted?: number;
+  readingsSkippedAsDuplicate?: number;
+  varietyHourlyCommitted?: number;
+  phaseHourlyCommitted?: number;
+  repairedFiles?: string[];
+  error?: string;
+}
+
+export interface ClimateTimestampCorrectionPreview {
+  filename: string;
+  importId: string;
+  fileHash: string;
+  oldMeasuredAtUtc: string;
+  newMeasuredAtUtc: string;
+  alreadyCorrect: boolean;
+  movedReadingCount: number;
+  recomputeTimestamps: string[];
+  conflictsAtTarget: { zoneLabel: string; metricName: string; existingValue: number; movedValue: number }[];
+  canApply: boolean;
+}
+
+export interface ClimateTimestampCorrectionResult {
+  status: 'corrected';
+  correctionId: string;
+  movedReadingCount: number;
+  recomputedTimestamps: string[];
+}
+
+export interface VarietyClimateHourlyRow {
+  id: string;
+  organization_id: string | null;
+  variety_id: string;
+  measured_at: string;
+  air_temperature_avg_c: number | null;
+  air_temperature_zone_count: number;
+  relative_humidity_avg_pct: number | null;
+  relative_humidity_zone_count: number;
+  co2_avg_ppm: number | null;
+  co2_zone_count: number;
+  ec_avg: number | null;
+  ec_zone_count: number;
+  ph_avg: number | null;
+  ph_zone_count: number;
+  irrigation_cumulative_avg_ml: number | null;
+  irrigation_zone_count: number;
+  irrigation_interval_delta_ml: number | null;
+  irrigation_interval_minutes: number | null;
+  irrigation_quality_flag: 'ok' | 'first_reading_of_day' | 'negative_reset' | null;
+  expected_zone_count: number;
+  phase_id: string | null;
+  /** Raw sensor running-total reading for this hour, not a value we compute. Can drop mid-day on a sensor/counter reset — see radiation_interval_delta_j_cm2 for the true per-hour delta. */
+  radiation_cumulative_j_cm2: number | null;
+  radiation_interval_delta_j_cm2: number | null;
+  quality_warnings: string[];
+  source_batch_id: string | null;
+}
+
+export interface VarietyClimateHourlyAggregatedRow {
+  bucket: string;
+  hourCount: number;
+  airTemperatureAvgC: number | null;
+  relativeHumidityAvgPct: number | null;
+  co2AvgPpm: number | null;
+  ecAvg: number | null;
+  phAvg: number | null;
+  irrigationIntervalTotalMl: number | null;
+  irrigationCumulativeEndOfPeriodMl: number | null;
+  /** The actual accumulated radiation for this bucket (sum of interval deltas, negative resets excluded). Use this for totals/charts/model inputs. */
+  radiationIntervalTotalJCm2: number | null;
+  /**
+   * The raw sensor's own cumulative counter reading at the last hour of this
+   * bucket — NOT a true accumulated total for the period. The counter can
+   * reset mid-day (confirmed against real data), so this can read lower than
+   * the period's actual accumulated radiation, or lower than an earlier hour
+   * in the same bucket. Use radiationIntervalTotalJCm2 for anything that
+   * needs "how much radiation accumulated during this period."
+   */
+  radiationCumulativeEndOfPeriodJCm2: number | null;
+}
+
+export type ClimateGranularity = 'hourly' | 'daily' | 'weekly';
+
+export interface VarietyClimateHourlyResult {
+  granularity: ClimateGranularity;
+  rows: VarietyClimateHourlyRow[] | VarietyClimateHourlyAggregatedRow[];
+  note?: string;
+}
+
+// ── Climate feature engine (Phase 1 + Phase 2) ──────────────────────────────
+// Everything below mirrors server response shapes from climateFeatures.ts /
+// varietyClimateFeatures.ts / climateExposureDataset.ts exactly — the client
+// only visualizes these, it never recomputes them.
+
+export type VpdBandKey = 'very_low' | 'low' | 'target' | 'elevated' | 'high';
+
+export interface VpdBandDefinition {
+  key: VpdBandKey;
+  label: string;
+  minKpa: number | null;
+  maxKpa: number | null;
+}
+
+export interface ClimateFeatureConfig {
+  vpdBands: VpdBandDefinition[];
+  vpdBandConfigVersion: string;
+  degreeHourBaseTempC: number;
+  degreeHourUpperCapC: number;
+  featureEngineVersion: string;
+}
+
+/** One row of variety_climate_hourly_features — the hourly granularity of GET /variety-features. */
+export interface VarietyClimateHourlyFeatureRow {
+  id: string;
+  organization_id: string | null;
+  variety_id: string;
+  measured_at: string;
+  degree_hours: number | null;
+  vpd_kpa: number | null;
+  vpd_band: VpdBandKey | null;
+  is_daylight: boolean;
+  ec_delta: number | null;
+  ph_delta: number | null;
+  co2_avg_ppm: number | null;
+  radiation_interval_delta_j_cm2: number | null;
+  irrigation_interval_delta_ml: number | null;
+  irrigation_interval_minutes: number | null;
+  source_variety_hourly_id: string | null;
+  degree_hour_base_temp_c: number;
+  degree_hour_upper_cap_c: number;
+  vpd_band_config_version: string;
+  feature_engine_version: string;
+  created_at: string;
+  updated_at: string;
+}
+
+/**
+ * The shared exposure-window aggregate (aggregateExposureWindow on the
+ * server) — used identically for a daily/weekly bucket, an ad-hoc /exposure
+ * range, and each of a fruit instance's/cohort's four lifecycle windows.
+ * coveragePct/hoursObserved/hoursExpected are what make a low-coverage
+ * result visually distinguishable from a trustworthy one — always check
+ * coveragePct before treating the other numbers at face value.
+ */
+export interface ExposureWindowFeatures {
+  hoursObserved: number;
+  hoursExpected: number;
+  coveragePct: number | null;
+  accumulatedDegreeHours: number | null;
+  accumulatedRadiationJCm2: number | null;
+  tempAvgC: number | null;
+  tempMinC: number | null;
+  tempMaxC: number | null;
+  vpdAvgKpa: number | null;
+  vpdMinKpa: number | null;
+  vpdMaxKpa: number | null;
+  vpdBandHours: Record<VpdBandKey, number>;
+  co2AvgPpm: number | null;
+  co2AvgDaylightPpm: number | null;
+  co2AvgNightPpm: number | null;
+  radiationWeightedCo2Ppm: number | null;
+  irrigationTotalMl: number | null;
+  irrigationEventCount: number;
+  irrigationAvgIntervalMinutes: number | null;
+  ecAvg: number | null;
+  ecMin: number | null;
+  ecMax: number | null;
+  ecStdDev: number | null;
+  phAvg: number | null;
+  phMin: number | null;
+  phMax: number | null;
+  phStdDev: number | null;
+}
+
+/** One daily/weekly bucket of GET /variety-features — a full ExposureWindowFeatures plus bucket context. */
+export interface VarietyClimateFeatureBucketRow extends ExposureWindowFeatures {
+  bucket: string;
+  hourCount: number;
+  airTemperatureAvgC: number | null;
+  relativeHumidityAvgPct: number | null;
+}
+
+export interface VarietyClimateFeatureResult {
+  granularity: ClimateGranularity;
+  rows: VarietyClimateHourlyFeatureRow[] | VarietyClimateFeatureBucketRow[];
+  note?: string;
+}
+
+/** GET /variety-features/exposure response — one ExposureWindowFeatures for an arbitrary [start, end) range. */
+export interface VarietyClimateExposureResult extends ExposureWindowFeatures {
+  varietyId: string;
+  start: string;
+  end: string;
+}
+
+export type FruitInstanceStatus = 'set' | 'harvested' | 'aborted' | 'pruned';
+
+/** One fruit_instances row joined to climate exposure across its four lifecycle windows (instance grain of the training dataset). */
+export interface FruitInstanceClimateRow {
+  fruitInstanceId: string;
+  varietyId: string;
+  plantNodeId: string;
+  setYear: number;
+  setWeekNumber: number;
+  setDate: string;
+  breakerYear: number | null;
+  breakerWeekNumber: number | null;
+  breakerDate: string | null;
+  harvestedYear: number | null;
+  harvestedWeekNumber: number | null;
+  harvestedDate: string | null;
+  status: FruitInstanceStatus;
+  weeksToBreaker: number | null;
+  weeksBreakerToHarvest: number | null;
+  weeksSetToHarvest: number | null;
+  setToCurrent: ExposureWindowFeatures | null;
+  setToBreaker: ExposureWindowFeatures | null;
+  breakerToHarvest: ExposureWindowFeatures | null;
+  setToHarvest: ExposureWindowFeatures | null;
+}
+
+/** Set-week cohort grain of the training dataset — instance-level climate exposure averaged across the cohort. */
+export interface SetWeekCohortClimateRow {
+  varietyId: string;
+  setYear: number;
+  setWeekNumber: number;
+  instanceCount: number;
+  harvestedCount: number;
+  abortedCount: number;
+  prunedCount: number;
+  openCount: number;
+  avgWeeksToBreaker: number | null;
+  avgWeeksBreakerToHarvest: number | null;
+  avgWeeksSetToHarvest: number | null;
+  setToCurrent: ExposureWindowFeatures | null;
+  setToBreaker: ExposureWindowFeatures | null;
+  breakerToHarvest: ExposureWindowFeatures | null;
+  setToHarvest: ExposureWindowFeatures | null;
+}
+
+export type ClimateTrainingDatasetGrain = 'instance' | 'cohort';
+
+export interface ClimateTrainingDatasetResult {
+  varietyId: string;
+  setYear: number;
+  grain: ClimateTrainingDatasetGrain;
+  /** Always 'not_used_by_any_model_yet' today — nothing consumes this data for prediction. */
+  modelStatus: string;
+  rows: FruitInstanceClimateRow[] | SetWeekCohortClimateRow[];
+}
+
+export type ExposureWindowKey = 'setToCurrent' | 'setToBreaker' | 'breakerToHarvest' | 'setToHarvest';
+
 export type GrowlinkConnectionStatus = 'not_configured' | 'connected' | 'connection_failed';
 
 export interface GrowlinkConnection {

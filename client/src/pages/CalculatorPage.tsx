@@ -1,7 +1,8 @@
 import { useState, useEffect, useCallback, useRef, useMemo, Fragment } from 'react';
-import { Season, Variety, RipeningActualsResult, RipeningActualsRow, RipeningActualsOffsetCell, BreakerForecastMeta } from '../types';
-import { varietiesApi, yearsApi, harvestTimingApi, fruitSetByWeekApi, fruitWeightsApi, ripeningActualsApi } from '../services/api';
+import { Season, Variety, RipeningActualsResult, RipeningActualsRow, RipeningActualsOffsetCell, BreakerForecastMeta, SetWeekCohortClimateRow } from '../types';
+import { varietiesApi, yearsApi, harvestTimingApi, fruitSetByWeekApi, fruitWeightsApi, ripeningActualsApi, climateTrainingDatasetApi } from '../services/api';
 import { defaultYear, getIsoWeek, uniqueYears, yearNumbers } from '../utils/years';
+import { CalculatorClimateExposure } from '../components/CalculatorClimateExposure';
 
 // Shows a decimal place only when the value actually has a fractional part —
 // forecast counts/percentages are fractional by nature, confirmed ones never are.
@@ -243,6 +244,29 @@ export function CalculatorPage() {
 
   useEffect(() => { loadData(); }, [loadData]);
 
+  // Climate exposure per set-week cohort — a separate, non-fatal fetch that
+  // never touches the projection/forecast load above. One request covers
+  // every set-week at once (not per-row), looked up by set_week_number when
+  // a row's Climate Exposure section is expanded.
+  const [climateCohorts, setClimateCohorts] = useState<SetWeekCohortClimateRow[]>([]);
+  const [expandedClimateWeeks, setExpandedClimateWeeks] = useState<Set<number>>(new Set());
+
+  function toggleClimateExpanded(setWeekNumber: number) {
+    setExpandedClimateWeeks(prev => {
+      const next = new Set(prev);
+      if (next.has(setWeekNumber)) next.delete(setWeekNumber);
+      else next.add(setWeekNumber);
+      return next;
+    });
+  }
+
+  useEffect(() => {
+    if (!selectedVariety || !selectedYear) { setClimateCohorts([]); return; }
+    climateTrainingDatasetApi.get(selectedVariety, selectedYear, 'cohort')
+      .then(r => setClimateCohorts(r.rows as SetWeekCohortClimateRow[]))
+      .catch(() => setClimateCohorts([]));
+  }, [selectedVariety, selectedYear]);
+
   // Global mouse listeners for fill-down drag — attached only while a drag is active
   const isDragging = fillDrag !== null;
   useEffect(() => {
@@ -440,6 +464,9 @@ export function CalculatorPage() {
                       const actualRow = actualsByWeek.get(row.set_week_number);
                       const hasDetail = !!actualRow && actualRow.setCount > 0;
                       const isExpanded = hasDetail && expandedWeeks.has(row.set_week_number);
+                      const climateCohort = climateCohorts.find(c => c.setWeekNumber === row.set_week_number);
+                      const hasClimateDetail = !!climateCohort;
+                      const isClimateExpanded = hasClimateDetail && expandedClimateWeeks.has(row.set_week_number);
                       const totalCols = 2 + OFFSET_COLS.length + 2;
                       return (
                         <Fragment key={row.set_week_number}>
@@ -449,19 +476,32 @@ export function CalculatorPage() {
                           data-row-idx={i}
                         >
                           <td style={{ fontWeight: 600, color: 'var(--gray-500)', whiteSpace: 'nowrap' }}>
-                            {hasDetail ? (
-                              <button
-                                type="button"
-                                className="row-expand-toggle"
-                                onClick={() => toggleExpanded(row.set_week_number)}
-                                title="Show underlying fruit-instance detail for this set week"
-                              >
-                                <span className={`row-expand-chevron${isExpanded ? ' row-expand-chevron--open' : ''}`}>▸</span>
-                                {i + 1}
-                              </button>
-                            ) : (
-                              i + 1
-                            )}
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                              {hasDetail ? (
+                                <button
+                                  type="button"
+                                  className="row-expand-toggle"
+                                  onClick={() => toggleExpanded(row.set_week_number)}
+                                  title="Show underlying fruit-instance detail for this set week"
+                                >
+                                  <span className={`row-expand-chevron${isExpanded ? ' row-expand-chevron--open' : ''}`}>▸</span>
+                                  {i + 1}
+                                </button>
+                              ) : (
+                                i + 1
+                              )}
+                              {hasClimateDetail && (
+                                <button
+                                  type="button"
+                                  className="row-expand-toggle row-expand-toggle--climate"
+                                  onClick={() => toggleClimateExpanded(row.set_week_number)}
+                                  title="Show climate exposure for this set week"
+                                >
+                                  <span className={`row-expand-chevron${isClimateExpanded ? ' row-expand-chevron--open' : ''}`}>▸</span>
+                                  Climate
+                                </button>
+                              )}
+                            </div>
                           </td>
                           <td className="fruit-set-auto-cell calculator-fruit-set-col">
                             {measuredWeeks.has(i) ? (
@@ -564,6 +604,16 @@ export function CalculatorPage() {
                           <tr className="row-detail-row">
                             <td colSpan={totalCols}>
                               <RowDetail row={actualRow} breakerForecast={actuals!.breakerForecast} />
+                            </td>
+                          </tr>
+                        )}
+                        {isClimateExpanded && climateCohort && (
+                          <tr className="row-detail-row">
+                            <td colSpan={totalCols}>
+                              <div className="row-detail">
+                                <div className="card-title" style={{ marginBottom: 12 }}>Climate Exposure</div>
+                                <CalculatorClimateExposure cohort={climateCohort} varietyId={selectedVariety} year={selectedYear} />
+                              </div>
                             </td>
                           </tr>
                         )}
