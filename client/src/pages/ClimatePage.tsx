@@ -4,6 +4,8 @@ import { Variety, ClimateImportPreview, ClimateImportBatch, ClimateImportConfirm
 import { varietiesApi, climateImportBatchesApi, synoptaAgentImportsApi, varietyClimateHourlyApi } from '../services/api';
 import { ClimateAnalysisTab } from '../components/ClimateAnalysisTab';
 import { ClimateExposureTab } from '../components/ClimateExposureTab';
+import { ClimateDailySummary } from '../components/ClimateDailySummary';
+import type { SummaryMetricKey } from '../utils/climateSummary';
 
 type ClimatePageTab = 'import' | 'analysis' | 'exposure';
 
@@ -203,6 +205,7 @@ export function ClimatePage() {
   const [endDate, setEndDate] = useState(defaultEndDate);
   const [granularity, setGranularity] = useState<ClimateGranularity>('hourly');
   const [metricKey, setMetricKey] = useState<MetricKey>('air_temperature');
+  const [climateView, setClimateView] = useState<'summary' | 'chart'>('summary');
   const [hourlyRows, setHourlyRows] = useState<VarietyClimateHourlyRow[]>([]);
   const [aggRows, setAggRows] = useState<VarietyClimateHourlyAggregatedRow[]>([]);
   const [dataLoading, setDataLoading] = useState(false);
@@ -311,6 +314,12 @@ export function ClimatePage() {
     setConfirmResult(null);
     setResolutions({});
   }
+
+  const SUMMARY_COMPATIBLE_KEYS: SummaryMetricKey[] = ['air_temperature', 'relative_humidity', 'co2', 'ec', 'ph', 'radiation_interval'];
+  const summaryHeadlineKey: SummaryMetricKey = (SUMMARY_COMPATIBLE_KEYS as string[]).includes(metricKey)
+    ? (metricKey as SummaryMetricKey)
+    : 'air_temperature';
+  const selectedVariety = varieties.find((v) => v.id === selectedVarietyId) ?? null;
 
   const metric = METRICS.find((m) => m.key === metricKey)!;
   const chartPoints = granularity === 'hourly'
@@ -583,6 +592,116 @@ export function ClimatePage() {
           </div>
         )}
 
+        <h3 className="climate-page-section-heading climate-page-section-heading-primary">Climate Summary</h3>
+
+        <div className="selector-bar">
+          <label>Variety</label>
+          <select className="form-control" style={{ width: 180 }} value={selectedVarietyId} onChange={(e) => setSelectedVarietyId(e.target.value)}>
+            <option value="">- select -</option>
+            {varieties.map((v) => <option key={v.id} value={v.id}>{v.name}</option>)}
+          </select>
+          <label>From</label>
+          <input className="form-control" style={{ width: 150 }} type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} />
+          <label>To</label>
+          <input className="form-control" style={{ width: 150 }} type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} />
+          <label>View</label>
+          <select className="form-control" style={{ width: 120 }} value={granularity} onChange={(e) => setGranularity(e.target.value as ClimateGranularity)}>
+            <option value="hourly">Hourly</option>
+            <option value="daily">Daily</option>
+            <option value="weekly">Weekly</option>
+          </select>
+          <label>Metric</label>
+          <select className="form-control" style={{ width: 200 }} value={metricKey} onChange={(e) => setMetricKey(e.target.value as MetricKey)}>
+            {METRICS.map((m) => <option key={m.key} value={m.key}>{m.label}</option>)}
+          </select>
+        </div>
+
+        {selectedVarietyId && (
+          <div className="climate-view-toggle mb-4">
+            <button type="button" className={climateView === 'summary' ? 'btn btn-primary' : 'btn btn-secondary'} onClick={() => setClimateView('summary')}>
+              Past 24 Hours Summary
+            </button>
+            <button type="button" className={climateView === 'chart' ? 'btn btn-primary' : 'btn btn-secondary'} onClick={() => setClimateView('chart')}>
+              View full chart
+            </button>
+          </div>
+        )}
+
+        {!selectedVarietyId ? (
+          <div className="empty-state">Select a variety to view climate data.</div>
+        ) : climateView === 'summary' ? (
+          <ClimateDailySummary variety={selectedVariety} headlineMetricKey={summaryHeadlineKey} onViewFullChart={() => setClimateView('chart')} />
+        ) : dataLoading ? (
+          <div className="loading">Loading...</div>
+        ) : dataError ? (
+          <div className="error-state">Failed to load climate data: {dataError}</div>
+        ) : (hourlyRows.length === 0 && aggRows.length === 0) ? (
+          <div className="empty-state">No climate data in this date range. Import CSVs or link this variety to zones in Setup.</div>
+        ) : (
+          <>
+            <div className="card mb-4">
+              <div className="card-title">{metric.label} ({granularity})</div>
+              <ClimateChart points={chartPoints} unit={metric.unit} />
+            </div>
+
+            <div className="card">
+              <div className="card-title">Data Table</div>
+              <div className="table-wrap">
+                {granularity === 'hourly' ? (
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>Measured At</th><th>Air Temp</th><th>RH</th><th>CO2</th><th>EC</th><th>pH</th>
+                        <th>Irrigation Δ</th><th>Irrigation cum.</th><th>Radiation Δ</th><th>Radiation cum.</th><th>Warnings</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {hourlyRows.map((r) => (
+                        <tr key={r.id}>
+                          <td>{new Date(r.measured_at).toLocaleString()}</td>
+                          <td>{fmt(r.air_temperature_avg_c)} <span className="climate-zone-count">({r.air_temperature_zone_count}/{r.expected_zone_count})</span></td>
+                          <td>{fmt(r.relative_humidity_avg_pct)} <span className="climate-zone-count">({r.relative_humidity_zone_count}/{r.expected_zone_count})</span></td>
+                          <td>{fmt(r.co2_avg_ppm, 0)}</td>
+                          <td>{fmt(r.ec_avg, 2)}</td>
+                          <td>{fmt(r.ph_avg, 2)}</td>
+                          <td>{fmt(r.irrigation_interval_delta_ml, 0)}{r.irrigation_quality_flag && r.irrigation_quality_flag !== 'ok' ? ` (${r.irrigation_quality_flag})` : ''}</td>
+                          <td>{fmt(r.irrigation_cumulative_avg_ml, 0)}</td>
+                          <td>{fmt(r.radiation_interval_delta_j_cm2, 1)}</td>
+                          <td>{fmt(r.radiation_cumulative_j_cm2, 1)}</td>
+                          <td className="climate-warnings-cell">{r.quality_warnings.join('; ')}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                ) : (
+                  <table>
+                    <thead>
+                      <tr><th>{granularity === 'daily' ? 'Date' : 'Week'}</th><th>Hours</th><th>Air Temp</th><th>RH</th><th>CO2</th><th>EC</th><th>pH</th><th>Irrigation total</th><th>Radiation total</th></tr>
+                    </thead>
+                    <tbody>
+                      {aggRows.map((r) => (
+                        <tr key={r.bucket}>
+                          <td>{r.bucket}</td>
+                          <td>{r.hourCount}</td>
+                          <td>{fmt(r.airTemperatureAvgC)}</td>
+                          <td>{fmt(r.relativeHumidityAvgPct)}</td>
+                          <td>{fmt(r.co2AvgPpm, 0)}</td>
+                          <td>{fmt(r.ecAvg, 2)}</td>
+                          <td>{fmt(r.phAvg, 2)}</td>
+                          <td>{fmt(r.irrigationIntervalTotalMl, 0)}</td>
+                          <td>{fmt(r.radiationIntervalTotalJCm2, 1)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                )}
+              </div>
+            </div>
+          </>
+        )}
+
+        <h3 className="climate-page-section-heading climate-page-section-heading-secondary">Synopta Import History</h3>
+
         <div className="card mb-4">
           <div className="card-title-row" style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
             <button
@@ -661,99 +780,6 @@ export function ClimatePage() {
             </>
           )}
         </div>
-
-        <div className="selector-bar">
-          <label>Variety</label>
-          <select className="form-control" style={{ width: 180 }} value={selectedVarietyId} onChange={(e) => setSelectedVarietyId(e.target.value)}>
-            <option value="">- select -</option>
-            {varieties.map((v) => <option key={v.id} value={v.id}>{v.name}</option>)}
-          </select>
-          <label>From</label>
-          <input className="form-control" style={{ width: 150 }} type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} />
-          <label>To</label>
-          <input className="form-control" style={{ width: 150 }} type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} />
-          <label>View</label>
-          <select className="form-control" style={{ width: 120 }} value={granularity} onChange={(e) => setGranularity(e.target.value as ClimateGranularity)}>
-            <option value="hourly">Hourly</option>
-            <option value="daily">Daily</option>
-            <option value="weekly">Weekly</option>
-          </select>
-          <label>Metric</label>
-          <select className="form-control" style={{ width: 200 }} value={metricKey} onChange={(e) => setMetricKey(e.target.value as MetricKey)}>
-            {METRICS.map((m) => <option key={m.key} value={m.key}>{m.label}</option>)}
-          </select>
-        </div>
-
-        {!selectedVarietyId ? (
-          <div className="empty-state">Select a variety to view climate data.</div>
-        ) : dataLoading ? (
-          <div className="loading">Loading...</div>
-        ) : dataError ? (
-          <div className="error-state">Failed to load climate data: {dataError}</div>
-        ) : (hourlyRows.length === 0 && aggRows.length === 0) ? (
-          <div className="empty-state">No climate data in this date range. Import CSVs or link this variety to zones in Setup.</div>
-        ) : (
-          <>
-            <div className="card mb-4">
-              <div className="card-title">{metric.label} ({granularity})</div>
-              <ClimateChart points={chartPoints} unit={metric.unit} />
-            </div>
-
-            <div className="card">
-              <div className="card-title">Data Table</div>
-              <div className="table-wrap">
-                {granularity === 'hourly' ? (
-                  <table>
-                    <thead>
-                      <tr>
-                        <th>Measured At</th><th>Air Temp</th><th>RH</th><th>CO2</th><th>EC</th><th>pH</th>
-                        <th>Irrigation Δ</th><th>Irrigation cum.</th><th>Radiation Δ</th><th>Radiation cum.</th><th>Warnings</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {hourlyRows.map((r) => (
-                        <tr key={r.id}>
-                          <td>{new Date(r.measured_at).toLocaleString()}</td>
-                          <td>{fmt(r.air_temperature_avg_c)} <span className="climate-zone-count">({r.air_temperature_zone_count}/{r.expected_zone_count})</span></td>
-                          <td>{fmt(r.relative_humidity_avg_pct)} <span className="climate-zone-count">({r.relative_humidity_zone_count}/{r.expected_zone_count})</span></td>
-                          <td>{fmt(r.co2_avg_ppm, 0)}</td>
-                          <td>{fmt(r.ec_avg, 2)}</td>
-                          <td>{fmt(r.ph_avg, 2)}</td>
-                          <td>{fmt(r.irrigation_interval_delta_ml, 0)}{r.irrigation_quality_flag && r.irrigation_quality_flag !== 'ok' ? ` (${r.irrigation_quality_flag})` : ''}</td>
-                          <td>{fmt(r.irrigation_cumulative_avg_ml, 0)}</td>
-                          <td>{fmt(r.radiation_interval_delta_j_cm2, 1)}</td>
-                          <td>{fmt(r.radiation_cumulative_j_cm2, 1)}</td>
-                          <td className="climate-warnings-cell">{r.quality_warnings.join('; ')}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                ) : (
-                  <table>
-                    <thead>
-                      <tr><th>{granularity === 'daily' ? 'Date' : 'Week'}</th><th>Hours</th><th>Air Temp</th><th>RH</th><th>CO2</th><th>EC</th><th>pH</th><th>Irrigation total</th><th>Radiation total</th></tr>
-                    </thead>
-                    <tbody>
-                      {aggRows.map((r) => (
-                        <tr key={r.bucket}>
-                          <td>{r.bucket}</td>
-                          <td>{r.hourCount}</td>
-                          <td>{fmt(r.airTemperatureAvgC)}</td>
-                          <td>{fmt(r.relativeHumidityAvgPct)}</td>
-                          <td>{fmt(r.co2AvgPpm, 0)}</td>
-                          <td>{fmt(r.ecAvg, 2)}</td>
-                          <td>{fmt(r.phAvg, 2)}</td>
-                          <td>{fmt(r.irrigationIntervalTotalMl, 0)}</td>
-                          <td>{fmt(r.radiationIntervalTotalJCm2, 1)}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                )}
-              </div>
-            </div>
-          </>
-        )}
         </>
         )}
       </div>

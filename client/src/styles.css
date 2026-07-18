@@ -3037,6 +3037,213 @@ table tr.report-group__header-row:hover td {
   opacity: 0.85;
 }
 
+/* ── Past 24 Hours Climate Summary ──────────────────────────────────────── */
+
+.climate-page-section-heading {
+  font-weight: 700;
+  margin: 24px 0 12px;
+}
+
+.climate-page-section-heading:first-child {
+  margin-top: 0;
+}
+
+/* "What happened in the greenhouse" — the primary thing a grower should see first. */
+.climate-page-section-heading-primary {
+  font-size: 18px;
+  color: var(--gray-900);
+}
+
+/* Import history is administrative, not the headline — visually quieter and
+   set apart with a divider so it clearly reads as a secondary section. */
+.climate-page-section-heading-secondary {
+  font-size: 13px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--gray-500);
+  padding-top: 24px;
+  border-top: 1px solid var(--gray-200);
+}
+
+.climate-view-toggle {
+  display: flex;
+  gap: 8px;
+}
+
+.climate-summary-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+  margin-bottom: 4px;
+}
+
+.climate-summary-stale-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: #b45309;
+  margin-bottom: 4px;
+}
+
+.climate-summary-source-tag {
+  display: inline-block;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--green-700);
+  background: var(--green-50);
+  border: 1px solid var(--green-200);
+  border-radius: 4px;
+  padding: 2px 6px;
+}
+
+.climate-summary-overview {
+  font-size: 14px;
+  color: var(--gray-700);
+  line-height: 1.5;
+  margin: 12px 0 16px;
+}
+
+.climate-summary-events {
+  margin-bottom: 16px;
+}
+
+.climate-summary-metric-grid {
+  display: grid;
+  /* Fixed 6-up on desktop — SUMMARY_METRICS is always exactly 6 entries, so
+     1fr columns stretch evenly to fill the full card width with no leftover
+     margin (an auto-fill/minmax grid left empty phantom tracks here whenever
+     the row was wider than 6 cards' minimum width). Narrower viewports fall
+     back to fewer columns at the app's existing breakpoints below. */
+  grid-template-columns: repeat(6, 1fr);
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
+@media (max-width: 900px) {
+  .climate-summary-metric-grid {
+    grid-template-columns: repeat(3, 1fr);
+  }
+}
+
+@media (max-width: 480px) {
+  .climate-summary-metric-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.climate-summary-tile {
+  border: 1px solid var(--gray-200);
+  border-radius: 10px;
+  padding: 16px;
+  background: var(--gray-50);
+}
+
+.climate-summary-tile-highlighted {
+  border-color: var(--green-600);
+  background: var(--green-50);
+}
+
+.climate-summary-tile-title {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--gray-500);
+  margin-bottom: 4px;
+}
+
+.climate-summary-tile-current {
+  font-size: 22px;
+  font-weight: 700;
+  color: var(--gray-900);
+  font-variant-numeric: tabular-nums;
+}
+
+.climate-summary-delta-up,
+.climate-summary-delta-down {
+  display: inline-block;
+  font-size: 11px;
+  font-weight: 600;
+  margin: 2px 0 8px;
+}
+
+.climate-summary-delta-up { color: #b45309; }
+.climate-summary-delta-down { color: var(--blue-500); }
+
+.climate-summary-tile-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--gray-500);
+  padding: 2px 0;
+  border-top: 1px solid var(--gray-100);
+}
+
+.climate-summary-tile-row:first-of-type {
+  border-top: none;
+}
+
+.climate-summary-tile-row strong {
+  color: var(--gray-800);
+  font-variant-numeric: tabular-nums;
+}
+
+.climate-summary-tile-time {
+  color: var(--gray-400);
+  white-space: nowrap;
+}
+
+.climate-summary-targets {
+  margin-bottom: 12px;
+}
+
+.climate-summary-target-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 8px;
+  padding: 10px;
+  background: var(--gray-50);
+  border-radius: 6px;
+}
+
+.climate-summary-target-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 12px;
+}
+
+.climate-summary-target-row span:first-child {
+  width: 150px;
+  color: var(--gray-600);
+}
+
+.climate-summary-target-row label {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--gray-500);
+  font-size: 11px;
+}
+
+.climate-summary-timelines {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: 16px;
+  border-top: 1px solid var(--gray-100);
+  padding-top: 12px;
+}
+
+.climate-summary-timeline-panel {
+  min-width: 0;
+}
+
 /* Page tabs (Climate page: Import / Analysis / Crop Exposure) */
 .page-tabs {
   display: flex;
