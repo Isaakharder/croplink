@@ -24,6 +24,7 @@ import stemGrowthMeasurementsRouter from './routes/stemGrowthMeasurements';
 import blocksRouter from './routes/blocks';
 import blockClimateSummaryRouter from './routes/blockClimateSummary';
 import climateImportsRouter from './routes/climateImports';
+import climatePingRouter from './routes/climatePing';
 import climateImportBatchesRouter from './routes/climateImportBatches';
 import varietyClimateHourlyRouter from './routes/varietyClimateHourly';
 import varietyClimateFeaturesRouter from './routes/varietyClimateFeatures';
@@ -74,6 +75,7 @@ app.use(`${climateApi}/variety-features`, varietyClimateFeaturesRouter);
 app.use(`${climateApi}/feature-config`, climateFeatureConfigRouter);
 
 app.use('/api/v1/climate/imports', climateImportsRouter);
+app.use('/api/v1/climate/ping', climatePingRouter);
 
 const setupApi = '/api/setup';
 app.use(`${setupApi}/phases`, phasesRouter);
