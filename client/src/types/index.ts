@@ -402,6 +402,18 @@ export interface ClimateImportBatch {
   error_message: string | null;
 }
 
+export interface SynoptaAgentImport {
+  import_id: string;
+  created_at: string;
+  filename: string;
+  file_hash: string;
+  readings_stored: number;
+  zones: string[];
+  earliest_measured_at: string | null;
+  latest_measured_at: string | null;
+  source: 'Synopta Agent';
+}
+
 export interface ClimateImportStagedFileSummary {
   filename: string;
   status: 'parsed' | 'duplicate' | 'error' | 'repair';

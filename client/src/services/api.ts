@@ -23,6 +23,7 @@ import { apiUrl } from './apiBase';
 
 const BASE = apiUrl('/api/projection');
 const CLIMATE_BASE = apiUrl('/api/climate');
+const CLIMATE_V1_BASE = apiUrl('/api/v1/climate');
 const SETUP_BASE = apiUrl('/api/setup');
 const GROWLINK_BASE = apiUrl('/api/growlink');
 
@@ -45,6 +46,10 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
 
 async function climateRequest<T>(path: string, options?: RequestInit): Promise<T> {
   return requestFrom<T>(CLIMATE_BASE, path, options);
+}
+
+async function climateV1Request<T>(path: string, options?: RequestInit): Promise<T> {
+  return requestFrom<T>(CLIMATE_V1_BASE, path, options);
 }
 
 async function setupRequest<T>(path: string, options?: RequestInit): Promise<T> {
@@ -436,6 +441,13 @@ export const climateImportBatchesApi = {
     }),
   history: () => climateRequest<import('../types').ClimateImportBatch[]>('/import-batches'),
   cancel: (batchId: string) => climateRequest<void>(`/import-batches/${batchId}`, { method: 'DELETE' }),
+};
+
+// Synopta Agent imports (climate_imports/climate_readings) — the automated pipeline
+// GrowLinkAgent POSTs to. Read-only from the client; organization scoping is enforced
+// server-side.
+export const synoptaAgentImportsApi = {
+  list: () => climateV1Request<{ organization_id: string | null; imports: import('../types').SynoptaAgentImport[] }>('/imports'),
 };
 
 // Corrections for already-committed imports (e.g. a timestamp-resolution fix

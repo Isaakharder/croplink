@@ -128,4 +128,92 @@ router.post('/', climateImportAuth, async (req: Request, res: Response, next: Ne
   }
 });
 
+interface ReadingAgg {
+  zones: Set<string>;
+  earliest: string | null;
+  latest: string | null;
+}
+
+// GET /api/v1/climate/imports
+// Feeds the Climate page's "Synopta Agent Imports" tab. This is a browser-facing
+// read endpoint — unlike the POST above it does NOT require climateImportAuth,
+// since the browser has no session/API key to present (this app has no
+// user/session auth system). Organization isolation is instead enforced at the
+// query level: every climate_imports/climate_readings lookup is always filtered
+// to exactly one resolved organization_id, so results can never blend across
+// organizations even without a bearer key gating the request itself.
+router.get('/', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    let organizationId = typeof req.query.organization_id === 'string' ? req.query.organization_id : undefined;
+
+    if (!organizationId) {
+      const { data: orgs, error: orgsError } = await supabase
+        .from('organizations')
+        .select('id')
+        .eq('is_active', true);
+      if (orgsError) throw new Error(orgsError.message);
+
+      if (!orgs || orgs.length === 0) {
+        return res.status(200).json({ organization_id: null, imports: [] });
+      }
+      if (orgs.length > 1) {
+        return res.status(400).json({ error: 'organization_id is required when multiple organizations exist' });
+      }
+      organizationId = orgs[0].id;
+    }
+
+    const limit = Math.min(Number(req.query.limit) || 50, 200);
+
+    const { data: imports, error: importsError } = await supabase
+      .from('climate_imports')
+      .select('id, filename, file_hash, readings_stored, created_at')
+      .eq('organization_id', organizationId)
+      .order('created_at', { ascending: false })
+      .limit(limit);
+    if (importsError) throw new Error(importsError.message);
+
+    const importIds = (imports ?? []).map(imp => imp.id);
+    const aggByImport = new Map<string, ReadingAgg>();
+
+    if (importIds.length > 0) {
+      const { data: readings, error: readingsError } = await supabase
+        .from('climate_readings')
+        .select('import_id, zone_label, measured_at')
+        .eq('organization_id', organizationId)
+        .in('import_id', importIds);
+      if (readingsError) throw new Error(readingsError.message);
+
+      for (const r of readings ?? []) {
+        let agg = aggByImport.get(r.import_id);
+        if (!agg) {
+          agg = { zones: new Set(), earliest: null, latest: null };
+          aggByImport.set(r.import_id, agg);
+        }
+        agg.zones.add(r.zone_label);
+        if (!agg.earliest || r.measured_at < agg.earliest) agg.earliest = r.measured_at;
+        if (!agg.latest || r.measured_at > agg.latest) agg.latest = r.measured_at;
+      }
+    }
+
+    const result = (imports ?? []).map(imp => {
+      const agg = aggByImport.get(imp.id);
+      return {
+        import_id: imp.id,
+        created_at: imp.created_at,
+        filename: imp.filename,
+        file_hash: imp.file_hash,
+        readings_stored: imp.readings_stored,
+        zones: agg ? Array.from(agg.zones).sort() : [],
+        earliest_measured_at: agg?.earliest ?? null,
+        latest_measured_at: agg?.latest ?? null,
+        source: 'Synopta Agent',
+      };
+    });
+
+    return res.status(200).json({ organization_id: organizationId, imports: result });
+  } catch (e) {
+    next(e);
+  }
+});
+
 export default router;

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { Variety, ClimateImportPreview, ClimateImportBatch, ClimateImportConfirmResult, ClimateGranularity, VarietyClimateHourlyRow, VarietyClimateHourlyAggregatedRow } from '../types';
-import { varietiesApi, climateImportBatchesApi, varietyClimateHourlyApi } from '../services/api';
+import { Variety, ClimateImportPreview, ClimateImportBatch, ClimateImportConfirmResult, ClimateGranularity, VarietyClimateHourlyRow, VarietyClimateHourlyAggregatedRow, SynoptaAgentImport } from '../types';
+import { varietiesApi, climateImportBatchesApi, synoptaAgentImportsApi, varietyClimateHourlyApi } from '../services/api';
 import { ClimateAnalysisTab } from '../components/ClimateAnalysisTab';
 import { ClimateExposureTab } from '../components/ClimateExposureTab';
 
@@ -37,6 +37,19 @@ const METRICS: { key: MetricKey; label: string; unit: string; hourlyField: keyof
 
 function fmt(v: number | null | undefined, digits = 1): string {
   return v == null ? '—' : v.toFixed(digits);
+}
+
+const SYNOPTA_STALE_WARNING_HOURS = 2;
+
+// "3h 42m ago" / "just now" — used for "Time since last import".
+function timeSince(iso: string, now: Date): string {
+  const ms = now.getTime() - new Date(iso).getTime();
+  if (ms < 60_000) return 'just now';
+  const mins = Math.floor(ms / 60_000);
+  const hours = Math.floor(mins / 60);
+  const remMins = mins % 60;
+  if (hours === 0) return `${remMins}m ago`;
+  return `${hours}h ${remMins}m ago`;
 }
 
 // "Zone 1", "Zone 2", ... "Zone 14" -> "Zones 1–14" (falls back to a plain
@@ -204,6 +217,10 @@ export function ClimatePage() {
   const [expandedDuplicateTimestamps, setExpandedDuplicateTimestamps] = useState<Set<string>>(new Set());
   const [confirming, setConfirming] = useState(false);
   const [history, setHistory] = useState<ClimateImportBatch[]>([]);
+  const [importSourceTab, setImportSourceTab] = useState<'synopta' | 'manual'>('synopta');
+  const [synoptaImports, setSynoptaImports] = useState<SynoptaAgentImport[]>([]);
+  const [synoptaError, setSynoptaError] = useState<string | null>(null);
+  const [now, setNow] = useState(() => new Date());
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -212,11 +229,28 @@ export function ClimatePage() {
       setSelectedVarietyId((prev) => prev || data.find((v) => v.is_active)?.id || data[0]?.id || '');
     }).catch(() => {});
     refreshHistory();
+    refreshSynoptaImports();
+  }, []);
+
+  // Keeps "Time since last import" live without a full refetch.
+  useEffect(() => {
+    const id = setInterval(() => setNow(new Date()), 60_000);
+    return () => clearInterval(id);
   }, []);
 
   function refreshHistory() {
     climateImportBatchesApi.history().then(setHistory).catch(() => {});
   }
+
+  function refreshSynoptaImports() {
+    synoptaAgentImportsApi.list()
+      .then((result) => { setSynoptaImports(result.imports); setSynoptaError(null); })
+      .catch((e: Error) => setSynoptaError(e.message));
+  }
+
+  const lastSynoptaImport = synoptaImports[0] ?? null;
+  const synoptaStale = lastSynoptaImport != null &&
+    (now.getTime() - new Date(lastSynoptaImport.created_at).getTime()) > SYNOPTA_STALE_WARNING_HOURS * 60 * 60 * 1000;
 
   useEffect(() => {
     if (!selectedVarietyId) { setHourlyRows([]); setAggRows([]); return; }
@@ -550,24 +584,81 @@ export function ClimatePage() {
         )}
 
         <div className="card mb-4">
-          <div className="card-title">Import History</div>
-          {history.length === 0 ? (
-            <div className="empty-state">No imports yet.</div>
+          <div className="card-title-row" style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+            <button
+              className={`btn ${importSourceTab === 'synopta' ? 'btn-primary' : 'btn-secondary'}`}
+              onClick={() => setImportSourceTab('synopta')}
+            >
+              Synopta Agent Imports
+            </button>
+            <button
+              className={`btn ${importSourceTab === 'manual' ? 'btn-primary' : 'btn-secondary'}`}
+              onClick={() => setImportSourceTab('manual')}
+            >
+              Manual CSV Imports
+            </button>
+          </div>
+
+          {importSourceTab === 'synopta' ? (
+            <>
+              {lastSynoptaImport && (
+                <div className={`card mt-3 mb-3 ${synoptaStale ? 'alert-error' : ''}`}>
+                  <div className="card-title">Last Synopta Import</div>
+                  <div>Last measurement received: {lastSynoptaImport.latest_measured_at ? new Date(lastSynoptaImport.latest_measured_at).toLocaleString() : '—'}</div>
+                  <div>Number of zones: {lastSynoptaImport.zones.length}</div>
+                  <div>Number of readings: {lastSynoptaImport.readings_stored}</div>
+                  <div>Time since last import: {timeSince(lastSynoptaImport.created_at, now)}</div>
+                  {synoptaStale && (
+                    <div className="alert alert-error mt-2">
+                      No Synopta climate data received in the last {SYNOPTA_STALE_WARNING_HOURS} hours
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {synoptaError ? (
+                <div className="alert alert-error mt-2">{synoptaError}</div>
+              ) : synoptaImports.length === 0 ? (
+                <div className="empty-state">No Synopta agent imports yet.</div>
+              ) : (
+                <table>
+                  <thead><tr><th>Received</th><th>Measurement Time</th><th>Filename</th><th>Zones</th><th>Readings</th><th>Status</th></tr></thead>
+                  <tbody>
+                    {synoptaImports.map((imp) => (
+                      <tr key={imp.import_id}>
+                        <td>{new Date(imp.created_at).toLocaleString()}</td>
+                        <td>{imp.earliest_measured_at ? new Date(imp.earliest_measured_at).toLocaleString() : '—'}</td>
+                        <td>{imp.filename}</td>
+                        <td>{zoneRangeLabel(imp.zones)}</td>
+                        <td>{imp.readings_stored}</td>
+                        <td>Imported</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </>
           ) : (
-            <table>
-              <thead><tr><th>Created</th><th>Status</th><th>Files</th><th>Committed</th><th>Error</th></tr></thead>
-              <tbody>
-                {history.map((b) => (
-                  <tr key={b.id}>
-                    <td>{new Date(b.created_at).toLocaleString()}</td>
-                    <td>{b.status}</td>
-                    <td>{b.file_count}</td>
-                    <td>{b.committed_at ? new Date(b.committed_at).toLocaleString() : '—'}</td>
-                    <td>{b.error_message ?? ''}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+            <>
+              {history.length === 0 ? (
+                <div className="empty-state">No imports yet.</div>
+              ) : (
+                <table>
+                  <thead><tr><th>Created</th><th>Status</th><th>Files</th><th>Committed</th><th>Error</th></tr></thead>
+                  <tbody>
+                    {history.map((b) => (
+                      <tr key={b.id}>
+                        <td>{new Date(b.created_at).toLocaleString()}</td>
+                        <td>{b.status}</td>
+                        <td>{b.file_count}</td>
+                        <td>{b.committed_at ? new Date(b.committed_at).toLocaleString() : '—'}</td>
+                        <td>{b.error_message ?? ''}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </>
           )}
         </div>
 
