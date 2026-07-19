@@ -30,6 +30,30 @@ export interface SummaryMetricDef {
    * metric, just applied here too.
    */
   excludeNegative?: boolean;
+  /**
+   * True only for radiation: it's a cumulative/flow quantity (J/cm² gained
+   * PER HOUR), not a level like temperature — a grower's "how much radiation
+   * today" question is answered by the SUM of the hourly deltas, not their
+   * average or the latest hour's delta. When true, computeMetricSummary's
+   * accumulatedTotal (sum of non-negative deltas, same rule as
+   * sumAccumulatedRadiationJCm2 in server/src/lib/climateFeatures.ts — kept
+   * in sync manually since client/server don't share a module here) is what
+   * the tile and overview sentence lead with instead of avg/current.
+   */
+  isAccumulator?: boolean;
+  /**
+   * True only for pH: a raw reading of exactly 0 is a known sensor/fault
+   * sentinel there (confirmed against real data — see SENTINEL_ZERO_METRICS
+   * in server/src/lib/climateAveraging.ts for the evidence), not a real
+   * measurement. The server-side aggregation already excludes it before
+   * computing ph_avg, so this is defense-in-depth: if a 0 ever reaches the
+   * client anyway (an unfixed historical row, or a future ingestion path
+   * that bypasses the server fix), it's still never treated as real here —
+   * "throughout the pipeline," not just at one layer of it. EC does NOT get
+   * this treatment — it was investigated for the same pattern and found not
+   * to have it (99%+ of readings non-zero, no recurring pattern).
+   */
+  excludeZero?: boolean;
 }
 
 // Only metrics with a natural "average/min/max/current" reading are summarized
@@ -41,8 +65,8 @@ export const SUMMARY_METRICS: SummaryMetricDef[] = [
   { key: 'relative_humidity', label: 'Relative Humidity', shortLabel: 'Humidity', unit: '%', field: 'relative_humidity_avg_pct', supportsTarget: true, digits: 0 },
   { key: 'co2', label: 'CO₂', shortLabel: 'CO₂', unit: 'ppm', field: 'co2_avg_ppm', supportsTarget: true, digits: 0 },
   { key: 'ec', label: 'EC', shortLabel: 'EC', unit: 'mS/cm', field: 'ec_avg', supportsTarget: true, digits: 2 },
-  { key: 'ph', label: 'pH', shortLabel: 'pH', unit: '', field: 'ph_avg', supportsTarget: true, digits: 2 },
-  { key: 'radiation_interval', label: 'Radiation', shortLabel: 'Radiation', unit: ' J/cm²', field: 'radiation_interval_delta_j_cm2', supportsTarget: false, digits: 1, excludeNegative: true },
+  { key: 'ph', label: 'pH', shortLabel: 'pH', unit: '', field: 'ph_avg', supportsTarget: true, digits: 2, excludeZero: true },
+  { key: 'radiation_interval', label: 'Radiation', shortLabel: 'Radiation', unit: ' J/cm²', field: 'radiation_interval_delta_j_cm2', supportsTarget: false, digits: 1, excludeNegative: true, isAccumulator: true },
 ];
 
 // The four metrics the compact 24h timeline shows, per the spec — "where
@@ -88,8 +112,16 @@ export interface MetricSummaryStat {
   unit: string;
   digits: number;
   hoursObserved: number;
-  /** Hours excluded from every stat above because they're a sensor-reset artifact (radiation only — see SummaryMetricDef.excludeNegative). */
+  /** Hours excluded from every stat above because they're a sensor-reset artifact (radiation only — see SummaryMetricDef.excludeNegative). Doubles as "counter resets detected" for accumulator metrics. */
   excludedNegativeCount: number;
+  /** Hours excluded from every stat above because they're a sentinel "no reading" zero (pH only — see SummaryMetricDef.excludeZero). */
+  excludedZeroCount: number;
+  /** True for accumulator metrics (radiation) — the tile should lead with accumulatedTotal, not avg/current. */
+  isAccumulator: boolean;
+  /** Sum of the window's valid hourly deltas (accumulator metrics only, else null) — the actual "how much today" figure. */
+  accumulatedTotal: number | null;
+  previousAccumulatedTotal: number | null;
+  deltaAccumulatedFromPrevious: number | null;
   avg: number | null;
   min: ExtremePoint | null;
   max: ExtremePoint | null;
@@ -170,16 +202,19 @@ export function splitByWindow(
 }
 
 /**
- * A raw value, or null if it's missing or (for excludeNegative metrics) a
- * sensor-reset artifact. Exported so the compact timeline sparkline can apply
- * the same exclusion as the stat tiles — a reset artifact dominating a
- * "glance at a glance" chart's scale would defeat the point of it just as
- * much as reporting it as a real average/min/max would.
+ * A raw value, or null if it's missing, (for excludeNegative metrics) a
+ * sensor-reset artifact, or (for excludeZero metrics, i.e. pH) a sentinel
+ * "no reading" zero. Exported so the compact timeline sparkline can apply
+ * the same exclusion as the stat tiles — a reset/sentinel artifact
+ * dominating a "glance at a glance" chart's scale, or plotting as a real
+ * pH of 0, would defeat the point of it just as much as reporting it as a
+ * real average/min/max would.
  */
 export function readValue(row: VarietyClimateHourlyRow, def: SummaryMetricDef): number | null {
   const v = row[def.field] as number | null;
   if (v == null) return null;
   if (def.excludeNegative && v < 0) return null;
+  if (def.excludeZero && v === 0) return null;
   return v;
 }
 
@@ -191,6 +226,22 @@ function extractPoints(rows: VarietyClimateHourlyRow[], def: SummaryMetricDef): 
 
 function mean(values: number[]): number | null {
   return values.length === 0 ? null : values.reduce((a, b) => a + b, 0) / values.length;
+}
+
+function round(v: number, decimals: number): number {
+  const f = 10 ** decimals;
+  return Math.round(v * f) / f;
+}
+
+/**
+ * Sum of valid (non-null) values for an accumulator metric. Mirrors
+ * sumAccumulatedRadiationJCm2 in server/src/lib/climateFeatures.ts: `points`
+ * here has already had negative (reset) deltas removed by readValue(), so
+ * this is a plain sum, not a re-filter — kept as a separate named step so
+ * the "this is the accumulation rule" intent stays visible at the call site.
+ */
+function sumAccumulated(values: number[]): number | null {
+  return values.length === 0 ? null : round(values.reduce((a, b) => a + b, 0), 2);
 }
 
 function targetStatus(value: number, target: TargetRange): 'above' | 'below' | 'in' {
@@ -208,6 +259,9 @@ export function computeMetricSummary(
   const points = extractPoints(currentRows, def);
   const excludedNegativeCount = def.excludeNegative
     ? currentRows.filter((r) => (r[def.field] as number | null) != null && (r[def.field] as number) < 0).length
+    : 0;
+  const excludedZeroCount = def.excludeZero
+    ? currentRows.filter((r) => (r[def.field] as number | null) === 0).length
     : 0;
 
   let min: ExtremePoint | null = null;
@@ -269,6 +323,9 @@ export function computeMetricSummary(
   const previousAvg = mean(previousValues);
   const avg = mean(points.map((p) => p.value));
 
+  const accumulatedTotal = def.isAccumulator ? sumAccumulated(points.map((p) => p.value)) : null;
+  const previousAccumulatedTotal = def.isAccumulator ? sumAccumulated(previousValues) : null;
+
   return {
     key: def.key,
     label: def.label,
@@ -277,6 +334,11 @@ export function computeMetricSummary(
     digits: def.digits,
     hoursObserved: points.length,
     excludedNegativeCount,
+    excludedZeroCount,
+    isAccumulator: !!def.isAccumulator,
+    accumulatedTotal,
+    previousAccumulatedTotal,
+    deltaAccumulatedFromPrevious: accumulatedTotal != null && previousAccumulatedTotal != null ? round(accumulatedTotal - previousAccumulatedTotal, 2) : null,
     avg,
     min,
     max,
@@ -315,20 +377,38 @@ function buildOverviewSentence(varietyName: string, headline: MetricSummaryStat,
     const periodPhrase = isLive ? 'in the past 24 hours' : 'in this period';
     return `No ${headline.label.toLowerCase()} data has been recorded for ${varietyName} ${periodPhrase}.`;
   }
-  const avgStr = headline.avg.toFixed(headline.digits);
-  const minStr = headline.min.value.toFixed(headline.digits);
-  const maxStr = headline.max.value.toFixed(headline.digits);
-  const curStr = headline.current.value.toFixed(headline.digits);
-  // "currently" only makes sense when the window actually ends at (near) now —
-  // for a stale/historical window that word would misrepresent old data as live.
-  const currentLabel = isLive ? 'currently' : 'most recently';
   const periodPhrase = isLive ? 'the past 24 hours' : 'the most recent 24 hours of available data';
 
-  let sentence1 = `${headline.label} averaged ${avgStr}${headline.unit} over ${periodPhrase} (${minStr}–${maxStr}${headline.unit}), ${currentLabel} ${curStr}${headline.unit}`;
-  if (headline.deltaFromPrevious != null) {
-    const absDelta = Math.abs(headline.deltaFromPrevious).toFixed(headline.digits);
-    const direction = headline.deltaFromPrevious >= 0 ? 'higher' : 'lower';
-    sentence1 += ` — ${absDelta}${headline.unit} ${direction} than the prior 24-hour period`;
+  let sentence1: string;
+  if (headline.isAccumulator && headline.accumulatedTotal != null) {
+    // Radiation (or any future accumulator metric): the headline number is
+    // the SUM of the window, not an average or the latest hour's delta —
+    // see SummaryMetricDef.isAccumulator for why those would misrepresent it.
+    const totalStr = headline.accumulatedTotal.toFixed(headline.digits);
+    sentence1 = `${headline.label} accumulated ${totalStr}${headline.unit} over ${periodPhrase}`;
+    if (headline.deltaAccumulatedFromPrevious != null) {
+      const absDelta = Math.abs(headline.deltaAccumulatedFromPrevious).toFixed(headline.digits);
+      const direction = headline.deltaAccumulatedFromPrevious >= 0 ? 'more' : 'less';
+      sentence1 += ` — ${absDelta}${headline.unit} ${direction} than the prior 24-hour period`;
+    }
+    if (headline.excludedNegativeCount > 0) {
+      sentence1 += ` (${headline.excludedNegativeCount} sensor counter reset${headline.excludedNegativeCount === 1 ? '' : 's'} excluded)`;
+    }
+  } else {
+    const avgStr = headline.avg.toFixed(headline.digits);
+    const minStr = headline.min.value.toFixed(headline.digits);
+    const maxStr = headline.max.value.toFixed(headline.digits);
+    const curStr = headline.current.value.toFixed(headline.digits);
+    // "currently" only makes sense when the window actually ends at (near) now —
+    // for a stale/historical window that word would misrepresent old data as live.
+    const currentLabel = isLive ? 'currently' : 'most recently';
+
+    sentence1 = `${headline.label} averaged ${avgStr}${headline.unit} over ${periodPhrase} (${minStr}–${maxStr}${headline.unit}), ${currentLabel} ${curStr}${headline.unit}`;
+    if (headline.deltaFromPrevious != null) {
+      const absDelta = Math.abs(headline.deltaFromPrevious).toFixed(headline.digits);
+      const direction = headline.deltaFromPrevious >= 0 ? 'higher' : 'lower';
+      sentence1 += ` — ${absDelta}${headline.unit} ${direction} than the prior 24-hour period`;
+    }
   }
   sentence1 += '.';
 
@@ -377,6 +457,11 @@ export function buildClimateSummary(
     if (m.excludedNegativeCount > 0) {
       notableEvents.push(
         `${m.excludedNegativeCount} ${m.label.toLowerCase()} reading${m.excludedNegativeCount === 1 ? '' : 's'} reflected a sensor counter reset and ${m.excludedNegativeCount === 1 ? 'was' : 'were'} excluded from the stats above (see the full chart for the raw values).`
+      );
+    }
+    if (m.excludedZeroCount > 0) {
+      notableEvents.push(
+        `${m.excludedZeroCount} ${m.label.toLowerCase()} reading${m.excludedZeroCount === 1 ? '' : 's'} came back as 0 (no valid reading) and ${m.excludedZeroCount === 1 ? 'was' : 'were'} excluded from the stats above.`
       );
     }
   }

@@ -127,11 +127,13 @@ export function ClimateDailySummary({ variety, headlineMetricKey, onViewFullChar
           <div className="card-title" style={{ marginBottom: 2 }}>
             {summaryWindow.isLive ? 'Past 24 Hours Climate Summary' : 'Climate Summary'}
           </div>
-          {!summaryWindow.isLive && (
-            <div className="climate-summary-stale-label">
-              Latest 24 hours available: {fmtTime(summaryWindow.windowStartIso)} to {fmtTime(summaryWindow.windowEndIso)}
-            </div>
-          )}
+          {/* Always shown (not just when stale) — the grower should always be able to
+              see exactly which local-time window every card below represents, radiation
+              in particular since "24-hour total" is meaningless without knowing the period. */}
+          <div className={summaryWindow.isLive ? 'climate-summary-window-label' : 'climate-summary-stale-label'}>
+            {summaryWindow.isLive ? 'Window: ' : 'Latest 24 hours available: '}
+            {fmtTime(summaryWindow.windowStartIso)} to {fmtTime(summaryWindow.windowEndIso)}
+          </div>
           <span className="climate-summary-source-tag">Calculated directly from stored readings — no AI interpretation</span>
         </div>
         <button type="button" className="btn btn-secondary" onClick={onViewFullChart}>View full chart</button>
@@ -211,11 +213,13 @@ export function ClimateDailySummary({ variety, headlineMetricKey, onViewFullChar
 }
 
 function MetricTile({ stat, highlighted }: { stat: MetricSummaryStat; highlighted: boolean }) {
+  if (stat.isAccumulator) return <AccumulatorMetricTile stat={stat} highlighted={highlighted} />;
+
   if (stat.hoursObserved === 0) {
     return (
       <div className={`climate-summary-tile${highlighted ? ' climate-summary-tile-highlighted' : ''}`}>
         <div className="climate-summary-tile-title">{stat.shortLabel}</div>
-        <div className="empty-state" style={{ padding: 8 }}>No data</div>
+        <div className="empty-state" style={{ padding: 8 }}>No valid reading</div>
       </div>
     );
   }
@@ -223,7 +227,9 @@ function MetricTile({ stat, highlighted }: { stat: MetricSummaryStat; highlighte
   return (
     <div className={`climate-summary-tile${highlighted ? ' climate-summary-tile-highlighted' : ''}`}>
       <div className="climate-summary-tile-title">{stat.shortLabel}</div>
-      <div className="climate-summary-tile-current">{fmtStat(stat.current?.value ?? null, stat.digits, stat.unit)}</div>
+      <div className="climate-summary-tile-current">
+        {stat.current != null ? fmtStat(stat.current.value, stat.digits, stat.unit) : 'No valid reading'}
+      </div>
       {stat.deltaFromPrevious != null && (
         <span className={stat.deltaFromPrevious >= 0 ? 'climate-summary-delta-up' : 'climate-summary-delta-down'}>
           {stat.deltaFromPrevious >= 0 ? '▲' : '▼'} {Math.abs(stat.deltaFromPrevious).toFixed(stat.digits)}{stat.unit} vs prior 24h
@@ -242,6 +248,47 @@ function MetricTile({ stat, highlighted }: { stat: MetricSummaryStat; highlighte
         <div className="climate-summary-tile-row">
           <span>Target {stat.target.min ?? '—'}–{stat.target.max ?? '—'}{stat.unit}</span>
           <strong>{stat.hoursAboveTarget + stat.hoursBelowTarget}h outside</strong>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Radiation (and any future cumulative-flow metric): the headline number is
+// the window's SUM, never the latest hour's delta — see
+// SummaryMetricDef.isAccumulator. Deliberately excludes "Largest fall" (a
+// drop in the raw hourly delta is definitionally a counter reset, already
+// surfaced as its own "resets detected" row, not a real environmental swing
+// worth highlighting) and "current" (a single hour's delta is exactly the
+// misleading figure this fix replaces).
+function AccumulatorMetricTile({ stat, highlighted }: { stat: MetricSummaryStat; highlighted: boolean }) {
+  if (stat.hoursObserved === 0) {
+    return (
+      <div className={`climate-summary-tile${highlighted ? ' climate-summary-tile-highlighted' : ''}`}>
+        <div className="climate-summary-tile-title">{stat.shortLabel}</div>
+        <div className="empty-state" style={{ padding: 8 }}>No valid reading</div>
+      </div>
+    );
+  }
+
+  return (
+    <div className={`climate-summary-tile${highlighted ? ' climate-summary-tile-highlighted' : ''}`}>
+      <div className="climate-summary-tile-title">{stat.shortLabel} — 24-hour total</div>
+      <div className="climate-summary-tile-current">{fmtStat(stat.accumulatedTotal, stat.digits, stat.unit)}</div>
+      {stat.deltaAccumulatedFromPrevious != null && (
+        <span className={stat.deltaAccumulatedFromPrevious >= 0 ? 'climate-summary-delta-up' : 'climate-summary-delta-down'}>
+          {stat.deltaAccumulatedFromPrevious >= 0 ? '▲' : '▼'} {Math.abs(stat.deltaAccumulatedFromPrevious).toFixed(stat.digits)}{stat.unit} vs prior 24h total
+        </span>
+      )}
+      <div className="climate-summary-tile-row"><span>Min hourly contribution</span><strong>{fmtStat(stat.min?.value ?? null, stat.digits, stat.unit)}</strong><span className="climate-summary-tile-time">{fmtTime(stat.min?.at ?? null)}</span></div>
+      <div className="climate-summary-tile-row"><span>Max hourly contribution</span><strong>{fmtStat(stat.max?.value ?? null, stat.digits, stat.unit)}</strong><span className="climate-summary-tile-time">{fmtTime(stat.max?.at ?? null)}</span></div>
+      {stat.largestRise && (
+        <div className="climate-summary-tile-row"><span>Largest hourly rise</span><strong>+{stat.largestRise.delta.toFixed(stat.digits)}{stat.unit}</strong><span className="climate-summary-tile-time">{fmtTime(stat.largestRise.toAt)}</span></div>
+      )}
+      {stat.excludedNegativeCount > 0 && (
+        <div className="climate-summary-tile-row">
+          <span>Counter resets detected</span>
+          <strong>{stat.excludedNegativeCount}</strong>
         </div>
       )}
     </div>

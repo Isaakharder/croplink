@@ -86,14 +86,36 @@ const METRIC_LABELS: { metric: string; label: string }[] = [
   { metric: 'irrigation_cumulative_ml', label: 'Irrigation' },
 ];
 
+/**
+ * Metrics where a raw reading of exactly 0 is a known sensor/fault sentinel,
+ * not a real measurement — confirmed against real data: pH holds a genuine
+ * value (4.4-5.1) during active-irrigation hours and drops to exactly 0.00
+ * for a recurring ~8-hour block every day (inactive irrigation overnight),
+ * while every OTHER metric at the same zone+hour (temperature, RH, CO2, EC)
+ * stays normal. A real nutrient-solution pH of 0.00 is not physically
+ * plausible. EC was checked for the same pattern and did NOT show it
+ * (system-wide, only 1.8% of EC readings are exactly 0, with no recurring
+ * daily block, vs. 37.5% for pH) — so EC is deliberately excluded here.
+ * Only add a metric to this set with the same kind of clear evidence.
+ */
+const SENTINEL_ZERO_METRICS = new Set(['ph']);
+
+function isSentinelZero(metricName: string, value: number): boolean {
+  return SENTINEL_ZERO_METRICS.has(metricName) && value === 0;
+}
+
 export function computeVarietyHourlyRow(input: VarietyHourlyInput): VarietyHourlyResult {
   const expectedZoneCount = input.linkedZoneLabels.length;
 
+  // Sentinel-zero readings are treated as missing (null) BEFORE averaging —
+  // never replaced with another number, never counted toward zone coverage —
+  // exactly like a genuinely absent reading would be.
   const forMetric = (metricName: string) =>
     averageValid(
-      input.linkedZoneLabels.map(
-        (zl) => input.readings.find((r) => r.zoneLabel === zl && r.metricName === metricName)?.value ?? null
-      )
+      input.linkedZoneLabels.map((zl) => {
+        const raw = input.readings.find((r) => r.zoneLabel === zl && r.metricName === metricName)?.value ?? null;
+        return raw != null && isSentinelZero(metricName, raw) ? null : raw;
+      })
     );
 
   const byMetric = Object.fromEntries(METRIC_LABELS.map(({ metric }) => [metric, forMetric(metric)]));

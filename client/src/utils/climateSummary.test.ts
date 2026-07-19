@@ -139,3 +139,107 @@ describe('buildClimateSummary — source-agnostic aggregation', () => {
     expect(summary.overview).not.toContain('currently');
   });
 });
+
+describe('Radiation — accumulated total, not a per-hour statistic', () => {
+  // Reproduces the exact real-world shape that motivated this fix: a normal
+  // climb through the day, a mid-day sensor counter reset (large negative
+  // delta), then a small climb resuming right after — the bug this fixes
+  // showed the tiny post-reset delta as "the" radiation figure.
+  const now = new Date('2026-07-18T00:00:00Z');
+  const deltas = [100, 200, 300, -580, 50, 20]; // reset is the -580 at hour index 3
+  const rows = deltas.map((d, i) => makeRow(hoursAgoIso(now, 5 - i), 20, { radiation_interval_delta_j_cm2: d }));
+
+  it('sums the non-negative deltas into accumulatedTotal — a reset does not reduce the 24h total', () => {
+    const window = resolveSummaryWindow(rows, now)!;
+    const { currentRows, previousRows } = splitByWindow(rows, window);
+    const summary = buildClimateSummary('Mathieu', 'radiation_interval', currentRows, previousRows, {}, window.isLive);
+    const rad = summary.metrics.find((m) => m.key === 'radiation_interval')!;
+
+    // 100 + 200 + 300 + 50 + 20 = 670. The reset (-580) must NOT be
+    // subtracted — a sensor artifact resetting the counter is not a real
+    // 580 J/cm² loss of accumulated radiation.
+    expect(rad.accumulatedTotal).toBe(670);
+    expect(rad.excludedNegativeCount).toBe(1);
+  });
+
+  it('does not use the latest hourly delta as the main value', () => {
+    const window = resolveSummaryWindow(rows, now)!;
+    const { currentRows, previousRows } = splitByWindow(rows, window);
+    const summary = buildClimateSummary('Mathieu', 'radiation_interval', currentRows, previousRows, {}, window.isLive);
+    const rad = summary.metrics.find((m) => m.key === 'radiation_interval')!;
+
+    // The latest hour's delta (20) is a real number in this dataset but must
+    // never be what "the radiation total" resolves to.
+    expect(rad.accumulatedTotal).not.toBe(20);
+    expect(rad.isAccumulator).toBe(true);
+  });
+
+  it('compares the total against the previous 24h total, not an average', () => {
+    const previousDeltas = [10, 10, 10, 10, 10, 10]; // previous 24h totals to 60
+    // Hours 30..25 — comfortably inside (24h, 48h] ago, clear of the exact
+    // 24h boundary (splitByWindow's current bucket is inclusive of it).
+    const previousRowsRaw = previousDeltas.map((d, i) => makeRow(hoursAgoIso(now, 30 - i), 20, { radiation_interval_delta_j_cm2: d }));
+    const allRows = [...previousRowsRaw, ...rows];
+
+    const window = resolveSummaryWindow(allRows, now)!;
+    const { currentRows, previousRows } = splitByWindow(allRows, window);
+    const summary = buildClimateSummary('Mathieu', 'radiation_interval', currentRows, previousRows, {}, window.isLive);
+    const rad = summary.metrics.find((m) => m.key === 'radiation_interval')!;
+
+    expect(rad.accumulatedTotal).toBe(670);
+    expect(rad.previousAccumulatedTotal).toBe(60);
+    expect(rad.deltaAccumulatedFromPrevious).toBe(610);
+  });
+});
+
+describe('pH — sentinel zero exclusion (defense-in-depth at the client layer)', () => {
+  it('excludes an exact-zero pH reading from avg/min/max even if one reaches the client unfixed', () => {
+    // Server-side aggregation now nulls these out before they're ever stored
+    // (see climateAveraging.ts SENTINEL_ZERO_METRICS), but this proves the
+    // client doesn't silently trust a raw 0 either, in case an unfixed
+    // historical row or a future ingestion path ever produces one.
+    const now = new Date('2026-07-18T00:00:00Z');
+    const phValues = [5.0, 4.9, 0, 4.8, 0, 5.1];
+    const rows = phValues.map((v, i) => makeRow(hoursAgoIso(now, 5 - i), 20, { ph_avg: v }));
+
+    const window = resolveSummaryWindow(rows, now)!;
+    const { currentRows, previousRows } = splitByWindow(rows, window);
+    const summary = buildClimateSummary('Mathieu', 'ph', currentRows, previousRows, {}, window.isLive);
+    const ph = summary.metrics.find((m) => m.key === 'ph')!;
+
+    expect(ph.hoursObserved).toBe(4); // the two zero hours are excluded, not averaged as 0
+    expect(ph.avg).toBeCloseTo((5.0 + 4.9 + 4.8 + 5.1) / 4, 5);
+    expect(ph.min?.value).toBe(4.8); // never 0
+    expect(ph.max?.value).toBe(5.1);
+    expect(ph.excludedZeroCount).toBe(2);
+  });
+
+  it('shows the most recent VALID (non-zero) pH reading as current when the newest raw reading is zero', () => {
+    const now = new Date('2026-07-18T00:00:00Z');
+    // Newest hour (index 5, closest to `now`) is a sentinel zero.
+    const phValues = [5.0, 4.9, 4.95, 4.85, 4.7, 0];
+    const rows = phValues.map((v, i) => makeRow(hoursAgoIso(now, 5 - i), 20, { ph_avg: v }));
+
+    const window = resolveSummaryWindow(rows, now)!;
+    const { currentRows, previousRows } = splitByWindow(rows, window);
+    const summary = buildClimateSummary('Mathieu', 'ph', currentRows, previousRows, {}, window.isLive);
+    const ph = summary.metrics.find((m) => m.key === 'ph')!;
+
+    expect(ph.current?.value).toBe(4.7); // the last VALID reading, not 0
+  });
+
+  it('reports no current value (never 0) when every pH reading in the window is a sentinel zero', () => {
+    const now = new Date('2026-07-18T00:00:00Z');
+    const rows = [0, 0, 0].map((v, i) => makeRow(hoursAgoIso(now, 2 - i), 20, { ph_avg: v }));
+
+    const window = resolveSummaryWindow(rows, now)!;
+    const { currentRows, previousRows } = splitByWindow(rows, window);
+    const summary = buildClimateSummary('Mathieu', 'ph', currentRows, previousRows, {}, window.isLive);
+    const ph = summary.metrics.find((m) => m.key === 'ph')!;
+
+    expect(ph.hoursObserved).toBe(0);
+    expect(ph.current).toBeNull();
+    expect(ph.avg).toBeNull();
+    // This is the state the UI renders as "No valid reading" rather than "0.00".
+  });
+});
