@@ -2462,6 +2462,21 @@ table tr.report-group__header-row:hover td {
   vertical-align: middle;
 }
 
+/* GrowLink actual-harvest comparison columns — neutral styling deliberately
+   (no green/red): this app has no pre-existing convention for which
+   direction of actual-vs-projected is "good," so only direction-neutral
+   arrows distinguish over/under, not color. */
+.projections-growlink-legend {
+  font-size: 12px;
+  color: var(--gray-500);
+  margin: -4px 0 12px;
+}
+
+.proj-diff-arrow {
+  color: var(--gray-400);
+  font-size: 11px;
+}
+
 /* ── Breaker adjustment card ─────────────────────────────────────────────── */
 
 .breaker-card {
@@ -3083,6 +3098,13 @@ table tr.report-group__header-row:hover td {
   font-size: 12px;
   font-weight: 600;
   color: #b45309;
+  margin-bottom: 4px;
+}
+
+.climate-summary-window-label {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--gray-500);
   margin-bottom: 4px;
 }
 

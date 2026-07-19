@@ -1,8 +1,9 @@
 import { useState, useEffect, useMemo } from 'react';
-import { Season, Variety, HarvestProjectionsResult, BreakerLearningResult, VarietyClimateExposureResult, ClimateFeatureConfig } from '../types';
-import { yearsApi, varietiesApi, harvestProjectionsApi, breakerLearningApi, varietyClimateFeaturesApi, climateFeatureConfigApi } from '../services/api';
+import { Season, Variety, HarvestProjectionsResult, BreakerLearningResult, VarietyClimateExposureResult, ClimateFeatureConfig, GrowlinkHarvestActual } from '../types';
+import { yearsApi, varietiesApi, harvestProjectionsApi, breakerLearningApi, varietyClimateFeaturesApi, climateFeatureConfigApi, growlinkHarvestActualsApi } from '../services/api';
 import { defaultYear, uniqueYears } from '../utils/years';
 import { ProjectionsClimateContext } from '../components/ProjectionsClimateContext';
+import { buildWeeklyComparison, formatDifferenceLabel, type WeeklyComparisonRow } from '../utils/growlinkComparison';
 
 export function ProjectionsPage() {
   const [seasons, setSeasons] = useState<Season[]>([]);
@@ -45,6 +46,20 @@ export function ProjectionsPage() {
         setError(e instanceof Error ? e.message : 'Failed to load projections');
         setLoading(false);
       });
+  }, [selectedYear, selectedVarietyId]);
+
+  // GrowLink actual-harvest comparison — reporting only. Matched-only is
+  // enforced server-side (matched: true) AND re-checked inside
+  // buildWeeklyComparison() below; this fetch never writes anything and is
+  // never read by the forecast itself (harvestProjectionsApi above is
+  // fetched completely independently, in the effect right before this one).
+  const [growlinkActuals, setGrowlinkActuals] = useState<GrowlinkHarvestActual[]>([]);
+  useEffect(() => {
+    if (!selectedYear) { setGrowlinkActuals([]); return; }
+    growlinkHarvestActualsApi
+      .list({ year: selectedYear, matched: true, varietyId: selectedVarietyId || undefined })
+      .then(setGrowlinkActuals)
+      .catch(() => setGrowlinkActuals([]));
   }, [selectedYear, selectedVarietyId]);
 
   // Load breaker learning data whenever a single variety is selected
@@ -159,6 +174,46 @@ export function ProjectionsPage() {
     if (!data) return [];
     return activeWeeks.map((week) => data.weeklyTotals.find((w) => w.week === week)!);
   }, [data, activeWeeks]);
+
+  // GrowLink comparison rows — scoped to whatever the existing Variety
+  // filter already selected (a single variety's own weeks, or the
+  // all-varieties weekly total), matched by ISO year (the selectedYear
+  // param already sent to both fetches above) and ISO week_number.
+  // buildWeeklyComparison re-filters to variety_id != null itself.
+  const comparisonRows: WeeklyComparisonRow[] = useMemo(() => {
+    if (!data) return [];
+    const projectedByWeek = selectedVarietyId
+      ? (data.varieties[0]?.weeks ?? []).map((w) => ({ week: w.week, projectedKg: w.projectedKg }))
+      : data.weeklyTotals.map((w) => ({ week: w.week, projectedKg: w.totalKg }));
+    return buildWeeklyComparison(projectedByWeek, growlinkActuals);
+  }, [data, selectedVarietyId, growlinkActuals]);
+
+  const comparisonByWeek = useMemo(
+    () => new Map(comparisonRows.map((r) => [r.week, r])),
+    [comparisonRows]
+  );
+
+  // The variety table's own row set (activeWeeks, fruit/m² > 0) doesn't
+  // necessarily cover every week that has a matched GrowLink actual — e.g.
+  // a week can have real harvest-actual data before the projection model
+  // has anything for it. Widening the row set here (only for this table) is
+  // what makes those weeks visible at all; activeWeeks/weeklyRows above stay
+  // untouched for the Color-by-week table, which has no GrowLink comparison.
+  const varietyTableWeeks = useMemo(() => {
+    const weekSet = new Set<number>(activeWeeks);
+    for (const r of comparisonRows) weekSet.add(r.week);
+    return Array.from(weekSet).sort((a, b) => a - b);
+  }, [activeWeeks, comparisonRows]);
+
+  const varietyTableRows = useMemo(() => {
+    if (!data) return [];
+    return varietyTableWeeks.map((week) => data.weeklyTotals.find((w) => w.week === week)!);
+  }, [data, varietyTableWeeks]);
+
+  function fmtDiffKg(v: number | null): string {
+    if (v == null) return '—';
+    return `${v >= 0 ? '+' : ''}${v.toLocaleString(undefined, { maximumFractionDigits: 1 })}`;
+  }
 
   const colors = useMemo(() => {
     if (!data) return [];
@@ -480,6 +535,9 @@ Used for display only; not fed into historical learning or projection correction
               {/* Weekly by variety table */}
               <div className="projections-card projections-card--full">
                 <h3 className="projections-card-title">Weekly Projections by Variety</h3>
+                <p className="projections-growlink-legend">
+                  <strong>Projected</strong> = CropLink forecast &nbsp;·&nbsp; <strong>Actual</strong> = matched GrowLink harvest data
+                </p>
                 <div className="projections-table-scroll">
                   <table className="projections-table">
                     <thead>
@@ -492,40 +550,57 @@ Used for display only; not fed into historical learning or projection correction
                           </th>
                         ))}
                         {data.varieties.length > 1 && <th className="proj-total-col">Total kg</th>}
+                        <th>Actual kg (GrowLink)</th>
+                        <th>Difference kg</th>
+                        <th>Difference %</th>
                       </tr>
                     </thead>
                     <tbody>
-                      {weeklyRows.map(({ week, byVariety, totalKg }) => (
-                        <tr key={week}>
-                          <td className="proj-wk-col">W{week}</td>
-                          {data.varieties.map((v) => {
-                            const kg = byVariety[v.id] ?? 0;
-                            const fruitPerM2 = fruitPerM2Map[v.id]?.[week] ?? 0;
-                            if (kg > 0) {
-                              return (
-                                <td key={v.id} className="num-cell">
-                                  {fmt(kg)}
-                                  <div className="proj-cases-sub">{casesLabel(kg, caseKgByVariety[v.id])}</div>
-                                </td>
-                              );
-                            } else if (fruitPerM2 > 0) {
-                              return (
-                                <td key={v.id} className="num-cell proj-no-afw">
-                                  {fruitPerM2.toFixed(2)}<span className="proj-m2-unit">/m²</span>
-                                </td>
-                              );
-                            } else {
-                              return <td key={v.id} className="num-cell">—</td>;
-                            }
-                          })}
-                          {data.varieties.length > 1 && (
-                            <td className="num-cell proj-total-col">
-                              <strong>{fmt(totalKg)}</strong>
-                              <div className="proj-cases-sub">{totalCasesLabel(byVariety)}</div>
+                      {varietyTableRows.map(({ week, byVariety, totalKg }) => {
+                        const cmp = comparisonByWeek.get(week);
+                        const diffLabel = formatDifferenceLabel(cmp ?? { differenceKg: null, differencePct: null });
+                        return (
+                          <tr key={week}>
+                            <td className="proj-wk-col">W{week}</td>
+                            {data.varieties.map((v) => {
+                              const kg = byVariety[v.id] ?? 0;
+                              const fruitPerM2 = fruitPerM2Map[v.id]?.[week] ?? 0;
+                              if (kg > 0) {
+                                return (
+                                  <td key={v.id} className="num-cell">
+                                    {fmt(kg)}
+                                    <div className="proj-cases-sub">{casesLabel(kg, caseKgByVariety[v.id])}</div>
+                                  </td>
+                                );
+                              } else if (fruitPerM2 > 0) {
+                                return (
+                                  <td key={v.id} className="num-cell proj-no-afw">
+                                    {fruitPerM2.toFixed(2)}<span className="proj-m2-unit">/m²</span>
+                                  </td>
+                                );
+                              } else {
+                                return <td key={v.id} className="num-cell">—</td>;
+                              }
+                            })}
+                            {data.varieties.length > 1 && (
+                              <td className="num-cell proj-total-col">
+                                <strong>{fmt(totalKg)}</strong>
+                                <div className="proj-cases-sub">{totalCasesLabel(byVariety)}</div>
+                              </td>
+                            )}
+                            <td className="num-cell">
+                              {cmp?.actualKg != null ? fmt(cmp.actualKg) : '—'}
+                              {cmp?.actualKg != null && cmp.projectedKg <= 0 && (
+                                <div className="proj-cases-sub">No projection</div>
+                              )}
                             </td>
-                          )}
-                        </tr>
-                      ))}
+                            <td className="num-cell">{fmtDiffKg(cmp?.differenceKg ?? null)}</td>
+                            <td className="num-cell">
+                              {diffLabel.arrow && <span className="proj-diff-arrow">{diffLabel.arrow}</span>} {diffLabel.text}
+                            </td>
+                          </tr>
+                        );
+                      })}
                     </tbody>
                   </table>
                 </div>
