@@ -3,6 +3,7 @@ import {
   Variety,
   GrowlinkVarietyLink,
   GrowlinkHarvestActual,
+  GrowlinkHarvestActualsSyncResult,
   GrowlinkLinkStatus,
   GrowlinkConnectionStatus,
 } from '../types';
@@ -596,7 +597,15 @@ function HarvestActualsTab() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [yearFilter, setYearFilter] = useState<number | ''>('');
-  const [matchFilter, setMatchFilter] = useState<'all' | 'matched' | 'unmatched'>('all');
+  // Defaults to matched-only: unmatched records (varieties not yet added to
+  // CropLink) are normal, expected, and intentionally excluded from the
+  // default view and from every total on this page — they're not a broken
+  // or incomplete sync, just not set up for reporting yet. Switching this
+  // filter is the "collapsed section" a grower opens to audit them.
+  const [matchFilter, setMatchFilter] = useState<'matched' | 'unmatched' | 'all'>('matched');
+  const [syncing, setSyncing] = useState(false);
+  const [syncError, setSyncError] = useState('');
+  const [syncResult, setSyncResult] = useState<GrowlinkHarvestActualsSyncResult | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -613,31 +622,76 @@ function HarvestActualsTab() {
 
   useEffect(() => { load(); }, [load]);
 
+  async function handleSync() {
+    setSyncing(true);
+    setSyncError('');
+    setSyncResult(null);
+    try {
+      const result = await growlinkHarvestActualsApi.sync();
+      setSyncResult(result);
+      await load();
+    } catch (err: unknown) {
+      setSyncError(err instanceof Error ? err.message : 'Sync failed');
+    } finally {
+      setSyncing(false);
+    }
+  }
+
   const years = useMemo(
     () => Array.from(new Set(actuals.map(a => a.year))).sort((a, b) => b - a),
     [actuals]
   );
 
-  const filtered = useMemo(() => {
-    return actuals.filter(a => {
-      if (yearFilter !== '' && a.year !== yearFilter) return false;
-      if (matchFilter === 'matched' && !a.variety_id) return false;
-      if (matchFilter === 'unmatched' && a.variety_id) return false;
-      return true;
-    });
-  }, [actuals, yearFilter, matchFilter]);
+  const byYear = useMemo(
+    () => actuals.filter(a => yearFilter === '' || a.year === yearFilter),
+    [actuals, yearFilter]
+  );
 
-  const totalKg = filtered.reduce((s, a) => s + (a.kg != null ? Number(a.kg) : 0), 0);
-  const unmatchedCount = filtered.filter(a => !a.variety_id).length;
+  // The table respects the Match filter (default: matched-only) so a
+  // grower can deliberately open it up to audit unmatched records.
+  const filtered = useMemo(
+    () => byYear.filter(a => {
+      if (matchFilter === 'matched') return a.variety_id != null;
+      if (matchFilter === 'unmatched') return a.variety_id == null;
+      return true;
+    }),
+    [byYear, matchFilter]
+  );
+
+  // Every number reported as a "total" on this page is matched-only,
+  // unconditionally — independent of whatever the Match filter is currently
+  // showing in the table below, so switching the filter to inspect
+  // unmatched rows can never leak them into a total.
+  const matchedInYear = useMemo(() => byYear.filter(a => a.variety_id != null), [byYear]);
+  const unmatchedInYear = useMemo(() => byYear.filter(a => a.variety_id == null), [byYear]);
+  const totalKg = matchedInYear.reduce((s, a) => s + (a.kg != null ? Number(a.kg) : 0), 0);
 
   return (
     <div className="card">
       <div className="flex items-center justify-between mb-4">
         <div className="card-title" style={{ margin: 0 }}>Harvest Actuals</div>
-        <button className="btn btn-secondary btn-sm" disabled title="GrowLink sync isn't set up yet">
-          Sync Now
+        <button className="btn btn-secondary btn-sm" onClick={handleSync} disabled={syncing}>
+          {syncing ? 'Syncing…' : 'Sync Now'}
         </button>
       </div>
+
+      {syncError && <div className="alert alert-error mb-4">{syncError}</div>}
+      {syncResult && (
+        <div className="climate-info-banner mb-4">
+          <div className="climate-info-banner-title">Sync complete</div>
+          <p>
+            Fetched {syncResult.fetched} record{syncResult.fetched === 1 ? '' : 's'} from GrowLink —{' '}
+            {syncResult.created} new, {syncResult.updated} updated, {syncResult.unchanged} unchanged
+            {syncResult.skipped > 0 ? `, ${syncResult.skipped} skipped (malformed)` : ''}.
+          </p>
+          <p>
+            {syncResult.matched} matched to a variety already set up in CropLink
+            {syncResult.unmatched > 0
+              ? `. ${syncResult.unmatched} are for varieties not yet added here — stored for when you add and link them, not shown in totals until then.`
+              : '.'}
+          </p>
+        </div>
+      )}
 
       {error && <div className="alert alert-error mb-4">{error}</div>}
 
@@ -659,32 +713,45 @@ function HarvestActualsTab() {
           value={matchFilter}
           onChange={e => setMatchFilter(e.target.value as typeof matchFilter)}
         >
-          <option value="all">All</option>
           <option value="matched">Matched to a variety</option>
-          <option value="unmatched">Unmatched</option>
+          <option value="unmatched">Not yet linked{unmatchedInYear.length > 0 ? ` (${unmatchedInYear.length})` : ''}</option>
+          <option value="all">All</option>
         </select>
       </div>
 
       {loading ? (
         <div className="loading">Loading…</div>
+      ) : actuals.length === 0 ? (
+        <div className="empty-state">
+          No harvest actuals yet. Click "Sync Now" to pull the latest records from GrowLink.
+        </div>
       ) : filtered.length === 0 ? (
         <div className="empty-state">
-          No harvest actuals yet. These records are populated automatically once GrowLink sync is enabled — there's nothing to enter here manually.
+          {matchFilter === 'matched'
+            ? unmatchedInYear.length > 0
+              ? `No records yet for varieties set up in CropLink. ${unmatchedInYear.length} record${unmatchedInYear.length === 1 ? ' is' : 's are'} stored for varieties not linked yet — switch Match to "Not yet linked" to see them.`
+              : 'No harvest actuals for this year.'
+            : 'No records match this filter.'}
         </div>
       ) : (
         <>
+          {matchFilter !== 'matched' && (
+            <div className="climate-info-banner mb-4">
+              This view includes records for varieties not yet added to CropLink — they're excluded from totals, Projected vs Actual, and dashboards until you add and link the variety, then Sync Now again.
+            </div>
+          )}
           <div className="grid-3 mb-4">
             <div className="stat-card">
-              <div className="stat-label">Records</div>
-              <div className="stat-value" style={{ fontSize: 18 }}>{filtered.length}</div>
+              <div className="stat-label">Matched Records</div>
+              <div className="stat-value" style={{ fontSize: 18 }}>{matchedInYear.length}</div>
             </div>
             <div className="stat-card">
-              <div className="stat-label">Total kg</div>
+              <div className="stat-label">Matched Total kg</div>
               <div className="stat-value" style={{ fontSize: 18 }}>{totalKg.toFixed(1)}</div>
             </div>
             <div className="stat-card">
-              <div className="stat-label">Unmatched</div>
-              <div className="stat-value" style={{ fontSize: 18 }}>{unmatchedCount}</div>
+              <div className="stat-label">Not Yet Linked</div>
+              <div className="stat-value" style={{ fontSize: 18 }}>{unmatchedInYear.length}</div>
             </div>
           </div>
           <div className="table-wrap">
@@ -710,7 +777,7 @@ function HarvestActualsTab() {
                       {a.variety?.name ? (
                         a.variety.name
                       ) : (
-                        <span className="badge badge-yellow" title={`GrowLink variety key: ${a.growlink_variety_key}`}>Unmatched</span>
+                        <span className="badge badge-gray" title={`GrowLink variety key: ${a.growlink_variety_key}`}>Not yet linked</span>
                       )}
                     </td>
                     <td><code>{a.growlink_harvest_key}</code></td>

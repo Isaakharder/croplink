@@ -804,6 +804,19 @@ export interface GrowlinkHarvestActual {
   variety?: { id: string; name: string } | null;
 }
 
+/** Response from POST /api/growlink/harvest-actuals/sync. */
+export interface GrowlinkHarvestActualsSyncResult {
+  fetched: number;
+  created: number;
+  updated: number;
+  /** Already matched what's stored — no write was made for these. */
+  unchanged: number;
+  matched: number;
+  unmatched: number;
+  skipped: number;
+  syncedAt: string;
+}
+
 export interface MeasurementSummaryResponse {
   summary: {
     totalMeasuredRows: number;

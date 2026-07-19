@@ -12,7 +12,7 @@ const TEST_TIMEOUT_MS = 10000;
 
 type ConnectionStatus = 'not_configured' | 'connected' | 'connection_failed';
 
-interface ConnectionRow {
+export interface ConnectionRow {
   id: string;
   organization_id: string | null;
   integration_name: string;
@@ -64,7 +64,9 @@ function toPublic(row: ConnectionRow | null) {
   };
 }
 
-async function getConnectionRow(): Promise<ConnectionRow | null> {
+// Exported so growlinkHarvestActuals.ts's sync route can read the same
+// saved base_url/secret_key without a second, divergent lookup.
+export async function getConnectionRow(): Promise<ConnectionRow | null> {
   const { data, error } = await supabase
     .from('crop_integration_settings')
     .select('*')

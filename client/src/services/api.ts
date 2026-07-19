@@ -553,7 +553,9 @@ export const growlinkVarietyLinksApi = {
   delete: (id: string) => growlinkRequest<void>(`/variety-links/${id}`, { method: 'DELETE' }),
 };
 
-// GrowLink Harvest Actuals — read-only; populated by the future GrowLink sync service
+// GrowLink Harvest Actuals — records are never hand-edited; list/get are
+// read-only, and sync() is the one write path (fetches GrowLink's feed and
+// upserts it, see POST /harvest-actuals/sync on the server).
 export const growlinkHarvestActualsApi = {
   list: (params?: { varietyId?: string; year?: number; matched?: boolean }) => {
     const q = new URLSearchParams();
@@ -564,6 +566,7 @@ export const growlinkHarvestActualsApi = {
     return growlinkRequest<import('../types').GrowlinkHarvestActual[]>(`/harvest-actuals${qs ? `?${qs}` : ''}`);
   },
   get: (id: string) => growlinkRequest<import('../types').GrowlinkHarvestActual>(`/harvest-actuals/${id}`),
+  sync: () => growlinkRequest<import('../types').GrowlinkHarvestActualsSyncResult>('/harvest-actuals/sync', { method: 'POST' }),
 };
 
 // Projection
