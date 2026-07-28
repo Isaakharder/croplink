@@ -808,14 +808,6 @@ table tr.report-group__header-row:hover td {
   font-weight: 700 !important;
 }
 
-/* Average fruit weight column */
-.calc-afw-col {
-  width: 80px;
-  min-width: 80px;
-  max-width: 80px;
-  text-align: center;
-}
-
 /* Auto-calculated fruit set column — fixed narrow width */
 .calculator-fruit-set-col {
   width: 90px;
@@ -899,32 +891,6 @@ table tr.report-group__header-row:hover td {
 .calc-table input[type="number"]:focus {
   outline: none;
   border-color: var(--green-600);
-}
-
-/* Fill-down handle — appears in bottom-right of focused calc-table cell */
-.fill-handle {
-  position: absolute;
-  right: 3px;
-  bottom: 3px;
-  width: 7px;
-  height: 7px;
-  background: var(--green-600);
-  border: 1.5px solid var(--white);
-  border-radius: 1px;
-  cursor: crosshair;
-  z-index: 5;
-}
-
-.fill-handle:hover {
-  background: var(--green-700);
-  transform: scale(1.25);
-}
-
-/* Cell highlight during an active fill-down drag */
-.calc-table input.fill-drag-highlight {
-  background: var(--green-50);
-  border-color: var(--green-500);
-  box-shadow: 0 0 0 1px var(--green-400);
 }
 
 /* Actual harvest-timing cells — read-only, derived from fruit_instances */
@@ -1015,6 +981,73 @@ table tr.report-group__header-row:hover td {
   border-radius: 0;
   color: var(--gray-300);
   font-weight: 700;
+}
+
+/* Actual Harvested AFW panel — harvest-week-indexed, separate from the
+   set-week grid above it since AFW is keyed by a different week axis. */
+.afw-panel {
+  margin-top: 20px;
+  padding: 0;
+}
+
+.afw-panel-header {
+  padding: 14px 20px;
+  border-bottom: 1px solid var(--gray-200);
+}
+
+.afw-panel-subtitle {
+  font-size: 12px;
+  color: var(--gray-400);
+  margin-top: 2px;
+}
+
+.afw-table th,
+.afw-table td {
+  text-align: left;
+}
+
+.afw-status-cell {
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+/* Green = a real measurement recorded for this week */
+.afw-status-own {
+  color: var(--green-700);
+  font-weight: 600;
+}
+
+/* Orange = carried forward, matching this page's existing forecast/unconfirmed color language */
+.afw-status-carried {
+  color: #b45309;
+}
+
+.afw-status-none {
+  color: var(--gray-300);
+}
+
+.afw-override-cell {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.afw-override-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--gray-500);
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+/* Override input is visually distinct from an actual measurement — dashed
+   amber border, matching the orange forecast/unconfirmed color used
+   elsewhere on this page (e.g. .actual-cell-pct-breaker). */
+.afw-table input.afw-override-input {
+  border: 1px dashed #b45309;
+  background: #fffbeb;
 }
 
 /* Actual Harvest Timing Summary panel */

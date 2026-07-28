@@ -310,7 +310,7 @@ export function ProjectionsPage() {
             <>
               {hasMissingAfwWeeks && (
                 <div className="warning-banner">
-                  Some harvest weeks have projected fruit but no AFW/g — enter AFW/g in the Calculator to see kg estimates.
+                  Some harvest weeks have projected fruit but no known AFW — enter Actual harvested AFW/g in the Calculator to see kg estimates.
                 </div>
               )}
 
@@ -424,7 +424,7 @@ export function ProjectionsPage() {
                           </strong>
                         </div>
                         {breakerData.missingAfwWarning && (
-                          <div className="breaker-warning">AFW/g not set for W{nextWeek} — enter in Calculator</div>
+                          <div className="breaker-warning">No actual AFW known as of W{nextWeek} yet — enter Actual harvested AFW/g in the Calculator</div>
                         )}
                       </div>
                     </div>
@@ -542,7 +542,7 @@ Used for display only; not fed into historical learning or projection correction
                   <table className="projections-table">
                     <thead>
                       <tr>
-                        <th className="proj-wk-col">Wk</th>
+                        <th className="proj-wk-col" title="Harvest week — when fruit is expected to be picked. Fruit timing (set week → harvest week) still comes from the Calculator's set-week table; kg conversion uses the Actual harvested AFW recorded (or carried forward) for this harvest week directly.">Wk</th>
                         {data.varieties.map((v) => (
                           <th key={v.id}>
                             {v.name}
@@ -614,7 +614,7 @@ Used for display only; not fed into historical learning or projection correction
                     <table className="projections-table">
                       <thead>
                         <tr>
-                          <th className="proj-wk-col">Wk</th>
+                          <th className="proj-wk-col" title="Harvest week — see the note on the Weekly Projections by Variety table above.">Wk</th>
                           {colors.map((c) => <th key={c}>{c}</th>)}
                           <th className="proj-total-col">Total kg</th>
                         </tr>

@@ -1,0 +1,83 @@
+import { Router, Request, Response, NextFunction } from 'express';
+import { supabase } from '../lib/supabase';
+
+const router = Router();
+
+router.get('/', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const { varietyId, year } = req.query;
+    if (!varietyId || !year) {
+      return res.status(400).json({ error: 'varietyId and year are required' });
+    }
+    const { data, error } = await supabase
+      .from('harvest_afw_by_week')
+      .select('*')
+      .eq('variety_id', varietyId as string)
+      .eq('year', Number(year))
+      .order('week_number');
+    if (error) throw new Error(error.message);
+    res.json(data);
+  } catch (e) {
+    next(e);
+  }
+});
+
+router.post('/upsert-many', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const { rows } = req.body;
+    if (!Array.isArray(rows) || rows.length === 0) {
+      return res.status(400).json({ error: 'rows array is required' });
+    }
+
+    // An 'override' (manual guess for a not-yet-harvested week) must never
+    // clobber an already-recorded 'actual' (real measurement) for the same
+    // week — the unique key alone doesn't protect this since either source
+    // can legally occupy that row.
+    const overrideRows = rows.filter((r) => r.source === 'override');
+    const existingActualKeys = new Set<string>();
+    if (overrideRows.length > 0) {
+      const varietyIds = [...new Set(overrideRows.map((r) => r.variety_id))];
+      const { data: existing, error: exErr } = await supabase
+        .from('harvest_afw_by_week')
+        .select('variety_id, year, week_number, source')
+        .in('variety_id', varietyIds)
+        .eq('source', 'actual');
+      if (exErr) throw new Error(exErr.message);
+      for (const row of existing ?? []) {
+        existingActualKeys.add(`${row.variety_id}:${row.year}:${row.week_number}`);
+      }
+    }
+
+    const skipped: { week_number: number; reason: string }[] = [];
+    const rowsToUpsert = rows.filter((r) => {
+      if (r.source !== 'override') return true;
+      const key = `${r.variety_id}:${r.year}:${r.week_number}`;
+      if (existingActualKeys.has(key)) {
+        skipped.push({ week_number: r.week_number, reason: 'An actual already exists for that week' });
+        return false;
+      }
+      return true;
+    });
+
+    const upsertRows = rowsToUpsert.map((r) => ({
+      ...r,
+      updated_at: new Date().toISOString(),
+    }));
+
+    let data: unknown[] = [];
+    if (upsertRows.length > 0) {
+      const { data: upserted, error } = await supabase
+        .from('harvest_afw_by_week')
+        .upsert(upsertRows, { onConflict: 'variety_id,year,week_number' })
+        .select();
+      if (error) throw new Error(error.message);
+      data = upserted ?? [];
+    }
+
+    res.json({ data, skipped });
+  } catch (e) {
+    next(e);
+  }
+});
+
+export default router;

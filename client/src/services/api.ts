@@ -291,15 +291,16 @@ export const harvestTimingApi = {
     }),
 };
 
-// Fruit weights
-export const fruitWeightsApi = {
+// Actual harvested AFW, keyed by harvest week (carried forward client-side
+// via resolveAfwCarryForward for weeks with no entry of their own)
+export const harvestAfwByWeekApi = {
   list: (varietyId: string, year: number) =>
-    request<import('../types').FruitWeightByWeek[]>(`/fruit-weights?varietyId=${varietyId}&year=${year}`),
+    request<import('../types').HarvestAfwByWeek[]>(`/harvest-afw-by-week?varietyId=${varietyId}&year=${year}`),
   upsertMany: (rows: Record<string, unknown>[]) =>
-    request<import('../types').FruitWeightByWeek[]>('/fruit-weights/upsert-many', {
-      method: 'POST',
-      body: JSON.stringify({ rows }),
-    }),
+    request<{ data: import('../types').HarvestAfwByWeek[]; skipped: { week_number: number; reason: string }[] }>(
+      '/harvest-afw-by-week/upsert-many',
+      { method: 'POST', body: JSON.stringify({ rows }) }
+    ),
 };
 
 // Harvested

@@ -1,6 +1,7 @@
 import { Router, Request, Response, NextFunction } from 'express';
 import { supabase } from '../lib/supabase';
 import { chunkArray } from '../lib/chunkArray';
+import { resolveAfwCarryForward } from '../lib/afwCarryForward';
 
 const router = Router();
 
@@ -149,15 +150,15 @@ router.get('/', async (req: Request, res: Response, next: NextFunction) => {
     }
 
     // ── 4. Next-week AFW and kg estimate ─────────────────────────────────────
-    const { data: weightRow } = await supabase
-      .from('fruit_weight_by_week')
-      .select('weight_grams')
+    // Resolved via carry-forward (latest actual/override known as of that
+    // harvest week), same-year only — matches harvestProjections.ts.
+    const { data: nextWeekAfwRows } = await supabase
+      .from('harvest_afw_by_week')
+      .select('week_number, weight_grams, source')
       .eq('variety_id', varietyId as string)
-      .eq('year', nextWeekYear)
-      .eq('week_number', nextWeek)
-      .maybeSingle();
+      .eq('year', nextWeekYear);
 
-    const nextWeekAfw = (weightRow as { weight_grams: number } | null)?.weight_grams ?? 0;
+    const nextWeekAfw = resolveAfwCarryForward(nextWeekAfwRows ?? []).get(nextWeek)?.weightGrams ?? 0;
     const missingAfwWarning = nextWeekAfw === 0;
 
     // Raw estimate assumes 100% of currently-breaking fruit converts to
@@ -183,15 +184,16 @@ router.get('/', async (req: Request, res: Response, next: NextFunction) => {
 
     // ── 5. Current-week Harvested kg (display only — not fed into historical
     // learning or the breaker adjustment above; those are computed separately).
-    const { data: currentWeightRow } = await supabase
-      .from('fruit_weight_by_week')
-      .select('weight_grams')
-      .eq('variety_id', varietyId as string)
-      .eq('year', yearNum)
-      .eq('week_number', queryWeek)
-      .maybeSingle();
+    const currentWeekAfwRows =
+      yearNum === nextWeekYear
+        ? nextWeekAfwRows
+        : (await supabase
+            .from('harvest_afw_by_week')
+            .select('week_number, weight_grams, source')
+            .eq('variety_id', varietyId as string)
+            .eq('year', yearNum)).data;
 
-    const currentWeekAfw = (currentWeightRow as { weight_grams: number } | null)?.weight_grams ?? 0;
+    const currentWeekAfw = resolveAfwCarryForward(currentWeekAfwRows ?? []).get(queryWeek)?.weightGrams ?? 0;
     const currentWeekHarvestedKgEstimate =
       harvestedFruitPerM2 > 0 && currentWeekAfw > 0 && areaM2 > 0
         ? Math.round((harvestedFruitPerM2 * areaM2 * currentWeekAfw) / 1000 * 10) / 10

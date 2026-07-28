@@ -1,7 +1,8 @@
 import { useState, useEffect, useCallback, useRef, useMemo, Fragment } from 'react';
-import { Season, Variety, RipeningActualsResult, RipeningActualsRow, RipeningActualsOffsetCell, BreakerForecastMeta, SetWeekCohortClimateRow } from '../types';
-import { varietiesApi, yearsApi, harvestTimingApi, fruitSetByWeekApi, fruitWeightsApi, ripeningActualsApi, climateTrainingDatasetApi } from '../services/api';
+import { Season, Variety, RipeningActualsResult, RipeningActualsRow, RipeningActualsOffsetCell, BreakerForecastMeta, SetWeekCohortClimateRow, HarvestAfwByWeek } from '../types';
+import { varietiesApi, yearsApi, harvestTimingApi, fruitSetByWeekApi, harvestAfwByWeekApi, ripeningActualsApi, climateTrainingDatasetApi } from '../services/api';
 import { defaultYear, getIsoWeek, uniqueYears, yearNumbers } from '../utils/years';
+import { resolveAfwCarryForward } from '../utils/afwCarryForward';
 import { CalculatorClimateExposure } from '../components/CalculatorClimateExposure';
 
 // Shows a decimal place only when the value actually has a fractional part —
@@ -13,15 +14,48 @@ function fmt1(v: number): string {
 type RowDraft = {
   set_week_number: number;
   avg_fruit_set: string;
-  weight_grams: string;
 };
 
 function makeEmptyRows(): RowDraft[] {
   return Array.from({ length: 52 }, (_, i) => ({
     set_week_number: i + 1,
     avg_fruit_set: '',
-    weight_grams: '',
   }));
+}
+
+// Actual harvested AFW, indexed by harvest week (a different axis than the
+// set-week rows above — AFW is a property of when fruit is actually picked,
+// not of when it was set). `override` is a manual guess for a not-yet-
+// harvested week, kept in a separate field so it's never conflated with a
+// real measurement; `actual` always wins if both are present.
+type AfwRowDraft = {
+  week_number: number;
+  actual: string;
+  overrideEnabled: boolean;
+  override: string;
+};
+
+function makeEmptyAfwRows(): AfwRowDraft[] {
+  return Array.from({ length: 52 }, (_, i) => ({
+    week_number: i + 1,
+    actual: '',
+    overrideEnabled: false,
+    override: '',
+  }));
+}
+
+function buildAfwDraft(afwRows: HarvestAfwByWeek[]): AfwRowDraft[] {
+  const base = makeEmptyAfwRows();
+  for (const w of afwRows) {
+    const idx = w.week_number - 1;
+    if (idx < 0 || idx >= 52) continue;
+    if (w.source === 'actual') {
+      base[idx] = { ...base[idx], actual: String(w.weight_grams) };
+    } else {
+      base[idx] = { ...base[idx], overrideEnabled: true, override: String(w.weight_grams) };
+    }
+  }
+  return base;
 }
 
 const OFFSET_COLS = [4, 5, 6, 7, 8, 9, 10];
@@ -151,6 +185,8 @@ export function CalculatorPage() {
   const [selectedYear, setSelectedYear] = useState(todayYear);
   const [selectedVariety, setSelectedVariety] = useState('');
   const [rows, setRows] = useState<RowDraft[]>(makeEmptyRows());
+  const [afwDraft, setAfwDraft] = useState<AfwRowDraft[]>(makeEmptyAfwRows());
+  const [afwRawRows, setAfwRawRows] = useState<HarvestAfwByWeek[]>([]);
   const [actuals, setActuals] = useState<RipeningActualsResult | null>(null);
   const [saving, setSaving] = useState(false);
   const [saveMsg, setSaveMsg] = useState('');
@@ -171,15 +207,6 @@ export function CalculatorPage() {
   }
 
   const currentWeekRowRef = useRef<HTMLTableRowElement>(null);
-
-  // Fill-down drag state — only used for the AFW column now
-  const [fillDrag, setFillDrag] = useState<{
-    srcRowIdx: number;
-    curRowIdx: number;
-  } | null>(null);
-  const [activeCell, setActiveCell] = useState<{ rowIdx: number; col: 'weight_grams' } | null>(null);
-  const fillDragRef = useRef(fillDrag);
-  fillDragRef.current = fillDrag;
 
   useEffect(() => {
     yearsApi.list().then(data => {
@@ -204,10 +231,10 @@ export function CalculatorPage() {
   const loadData = useCallback(async () => {
     if (!selectedVariety || !selectedYear) return;
     try {
-      const [profiles, fruitSetData, weights, actualsData] = await Promise.all([
+      const [profiles, fruitSetData, afwRows, actualsData] = await Promise.all([
         harvestTimingApi.list(selectedVariety, selectedYear),
         fruitSetByWeekApi.get(selectedVariety, selectedYear).catch(() => []),
-        fruitWeightsApi.list(selectedVariety, selectedYear).catch(() => []),
+        harvestAfwByWeekApi.list(selectedVariety, selectedYear).catch(() => []),
         ripeningActualsApi.get(selectedVariety, selectedYear).catch(() => null),
       ]);
       const base = makeEmptyRows();
@@ -227,14 +254,11 @@ export function CalculatorPage() {
         }
       }
       setMeasuredWeeks(newMeasuredWeeks);
-      // Merge saved fruit weights
-      for (const w of weights) {
-        const idx = (w as { week_number: number }).week_number - 1;
-        if (idx >= 0 && idx < 52 && (w as { weight_grams: number }).weight_grams) {
-          base[idx] = { ...base[idx], weight_grams: String((w as { weight_grams: number }).weight_grams) };
-        }
-      }
       setRows(base);
+
+      setAfwDraft(buildAfwDraft(afwRows));
+      setAfwRawRows(afwRows);
+
       setActuals(actualsData);
       setLoadKey(k => k + 1);
     } catch (e: unknown) {
@@ -267,56 +291,6 @@ export function CalculatorPage() {
       .catch(() => setClimateCohorts([]));
   }, [selectedVariety, selectedYear]);
 
-  // Global mouse listeners for fill-down drag — attached only while a drag is active
-  const isDragging = fillDrag !== null;
-  useEffect(() => {
-    if (!isDragging) return;
-
-    function handleMouseMove(e: MouseEvent) {
-      const el = document.elementFromPoint(e.clientX, e.clientY);
-      const tr = el?.closest('[data-row-idx]');
-      if (tr instanceof HTMLElement && tr.dataset.rowIdx !== undefined) {
-        const idx = parseInt(tr.dataset.rowIdx, 10);
-        if (!isNaN(idx)) {
-          setFillDrag(prev => prev && idx > prev.srcRowIdx ? { ...prev, curRowIdx: idx } : prev);
-        }
-      }
-    }
-
-    function handleMouseUp() {
-      const drag = fillDragRef.current;
-      if (drag && drag.curRowIdx > drag.srcRowIdx) {
-        setRows(prev => {
-          const srcValue = prev[drag.srcRowIdx].weight_grams;
-          const next = [...prev];
-          for (let i = drag.srcRowIdx + 1; i <= drag.curRowIdx; i++) {
-            next[i] = { ...next[i], weight_grams: srcValue };
-          }
-          return next;
-        });
-      }
-      setFillDrag(null);
-    }
-
-    document.addEventListener('mousemove', handleMouseMove);
-    document.addEventListener('mouseup', handleMouseUp);
-    return () => {
-      document.removeEventListener('mousemove', handleMouseMove);
-      document.removeEventListener('mouseup', handleMouseUp);
-    };
-  }, [isDragging]);
-
-  // Crosshair cursor + no text-selection while dragging
-  useEffect(() => {
-    if (!isDragging) return;
-    document.body.style.cursor = 'crosshair';
-    document.body.style.userSelect = 'none';
-    return () => {
-      document.body.style.cursor = '';
-      document.body.style.userSelect = '';
-    };
-  }, [isDragging]);
-
   // After each load completes, scroll the current week row into the centre of
   // the visible table area — but only when viewing the current calendar year.
   useEffect(() => {
@@ -331,6 +305,22 @@ export function CalculatorPage() {
     setRows(prev => {
       const next = [...prev];
       next[weekIdx] = { ...next[weekIdx], [field]: value };
+      return next;
+    });
+  }
+
+  function updateAfwCell(weekIdx: number, field: 'actual' | 'override', value: string) {
+    setAfwDraft(prev => {
+      const next = [...prev];
+      next[weekIdx] = { ...next[weekIdx], [field]: value };
+      return next;
+    });
+  }
+
+  function toggleAfwOverride(weekIdx: number) {
+    setAfwDraft(prev => {
+      const next = [...prev];
+      next[weekIdx] = { ...next[weekIdx], overrideEnabled: !next[weekIdx].overrideEnabled };
       return next;
     });
   }
@@ -355,25 +345,47 @@ export function CalculatorPage() {
           avg_fruit_set: Number(r.avg_fruit_set || 0),
         }));
 
-      const weightRows = rows
-        .filter(r => Number(r.weight_grams || 0) > 0)
-        .map(r => ({
-          variety_id: selectedVariety,
-          year: selectedYear,
-          week_number: r.set_week_number,
-          weight_grams: Number(r.weight_grams),
-        }));
+      // A real measurement always wins: if a week has an actual entered,
+      // that's what's sent, even if the override toggle is also checked.
+      const afwRows = afwDraft
+        .map(r => {
+          const actualVal = Number(r.actual || 0);
+          if (actualVal > 0) {
+            return { variety_id: selectedVariety, year: selectedYear, week_number: r.week_number, weight_grams: actualVal, source: 'actual' as const };
+          }
+          const overrideVal = Number(r.override || 0);
+          if (r.overrideEnabled && overrideVal > 0) {
+            return { variety_id: selectedVariety, year: selectedYear, week_number: r.week_number, weight_grams: overrideVal, source: 'override' as const };
+          }
+          return null;
+        })
+        .filter((r): r is NonNullable<typeof r> => r !== null);
 
-      if (timingRows.length === 0 && weightRows.length === 0) {
+      if (timingRows.length === 0 && afwRows.length === 0) {
         setSaveMsg('Nothing to save — enter some data first.');
         return;
       }
 
-      await Promise.all([
-        timingRows.length > 0 ? harvestTimingApi.upsertMany(timingRows) : Promise.resolve(),
-        weightRows.length > 0 ? fruitWeightsApi.upsertMany(weightRows) : Promise.resolve(),
+      const [, afwResult] = await Promise.all([
+        timingRows.length > 0 ? harvestTimingApi.upsertMany(timingRows) : Promise.resolve(undefined),
+        afwRows.length > 0 ? harvestAfwByWeekApi.upsertMany(afwRows) : Promise.resolve({ data: [], skipped: [] }),
       ]);
-      setSaveMsg('Saved successfully!');
+
+      if (afwResult.skipped.length > 0) {
+        const weeks = afwResult.skipped.map(s => `W${s.week_number}`).join(', ');
+        setSaveMsg(`Saved. Override not saved for ${weeks} — an actual already exists for that week.`);
+      } else {
+        setSaveMsg('Saved successfully!');
+      }
+
+      // Refresh the AFW panel so carry-forward hints and the inputs
+      // themselves reflect what was actually persisted (a skipped override
+      // must not keep showing in its input as if it had saved).
+      if (afwRows.length > 0) {
+        const freshAfwRows = await harvestAfwByWeekApi.list(selectedVariety, selectedYear).catch(() => afwRawRows);
+        setAfwRawRows(freshAfwRows);
+        setAfwDraft(buildAfwDraft(freshAfwRows));
+      }
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : 'Save failed');
     } finally {
@@ -386,6 +398,14 @@ export function CalculatorPage() {
     for (const r of actuals?.rows ?? []) map.set(r.setWeekNumber, r);
     return map;
   }, [actuals]);
+
+  // Latest known AFW as of each harvest week — same carry-forward logic the
+  // server uses for kg projections, computed client-side from the raw saved
+  // rows (not the draft) so it only reflects what's actually persisted.
+  const resolvedAfw = useMemo(
+    () => resolveAfwCarryForward(afwRawRows.map(r => ({ week_number: r.week_number, weight_grams: r.weight_grams, source: r.source }))),
+    [afwRawRows]
+  );
 
   return (
     <>
@@ -415,6 +435,7 @@ export function CalculatorPage() {
         {!selectedVariety ? (
           <div className="empty-state">Select a year and variety to edit fruit development.</div>
         ) : (
+          <>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 320px', gap: 20 }}>
             {/* Main calculator table */}
             <div className="card" style={{ padding: 0 }}>
@@ -443,7 +464,7 @@ export function CalculatorPage() {
                 <table className="calc-table">
                   <thead>
                     <tr>
-                      <th>Wk</th>
+                      <th title="Set week — the week fruit was set, not the week it's harvested. Harvest happens ~4-10 weeks later; see the offset columns.">Set Wk</th>
                       <th className="calculator-fruit-set-col" title="Mobile-measured where available. Enter a forecast for future weeks — mobile data will override it when it arrives.">
                         Fruit Set / m²
                       </th>
@@ -455,7 +476,6 @@ export function CalculatorPage() {
                       <th title="Green: % harvested at any offset (may exceed the +4..+10 window).\nOrange: % expected fruit from the current breaker population (probabilistic forecast, may exceed the +4..+10 window).">
                         Harvested / Breaker
                       </th>
-                      <th className="calc-afw-col" title="Average fruit weight — still used by the Projections page and breaker adjustment">AFW/g</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -467,7 +487,7 @@ export function CalculatorPage() {
                       const climateCohort = climateCohorts.find(c => c.setWeekNumber === row.set_week_number);
                       const hasClimateDetail = !!climateCohort;
                       const isClimateExpanded = hasClimateDetail && expandedClimateWeeks.has(row.set_week_number);
-                      const totalCols = 2 + OFFSET_COLS.length + 2;
+                      const totalCols = 2 + OFFSET_COLS.length + 1;
                       return (
                         <Fragment key={row.set_week_number}>
                         <tr
@@ -570,33 +590,6 @@ export function CalculatorPage() {
                               </div>
                             ) : (
                               <span className="actual-cell-blank-inline">—</span>
-                            )}
-                          </td>
-                          <td className="calc-afw-col" style={{ position: 'relative' }}>
-                            <input
-                              type="number"
-                              min="0"
-                              step="1"
-                              value={row.weight_grams}
-                              placeholder="0"
-                              onChange={e => updateCell(i, 'weight_grams', e.target.value)}
-                              onFocus={() => setActiveCell({ rowIdx: i, col: 'weight_grams' })}
-                              onBlur={() => setActiveCell(null)}
-                              className={
-                                fillDrag != null && i > fillDrag.srcRowIdx && i <= fillDrag.curRowIdx
-                                  ? 'fill-drag-highlight'
-                                  : undefined
-                              }
-                            />
-                            {((activeCell?.rowIdx === i && activeCell?.col === 'weight_grams') ||
-                              (fillDrag?.srcRowIdx === i)) && (
-                              <div
-                                className="fill-handle"
-                                onMouseDown={e => {
-                                  e.preventDefault();
-                                  setFillDrag({ srcRowIdx: i, curRowIdx: i });
-                                }}
-                              />
                             )}
                           </td>
                         </tr>
@@ -713,6 +706,87 @@ export function CalculatorPage() {
               </div>
             </div>
           </div>
+
+          {/* Actual Harvested AFW — a separate harvest-week-indexed panel.
+              AFW is a property of when fruit is actually picked, not of
+              when it was set, so it can't live in the set-week grid above. */}
+          <div className="card afw-panel">
+            <div className="afw-panel-header">
+              <div className="card-title" style={{ marginBottom: 2 }}>Actual Harvested AFW</div>
+              <div className="afw-panel-subtitle">
+                Recorded by the week fruit is actually harvested — feeds kg projections on the Projections page,
+                carried forward until a newer actual is entered.
+              </div>
+            </div>
+            <div className="calculator-table-scroll">
+              <table className="calc-table afw-table">
+                <thead>
+                  <tr>
+                    <th>Wk</th>
+                    <th title="A real measurement — always wins over an override for the same week.">Actual harvested AFW/g</th>
+                    <th>Status</th>
+                    <th title="A manual guess for a week that hasn't been harvested yet — clearly separate from a measured actual, and never overwrites one.">Manual override</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {afwDraft.map((row, i) => {
+                    const isCurrentWeek = selectedYear === todayYear && row.week_number === currentWeek;
+                    const resolved = resolvedAfw.get(row.week_number) ?? null;
+                    const hasOwnEntry = resolved?.asOfWeek === row.week_number;
+                    return (
+                      <tr key={row.week_number} className={isCurrentWeek ? 'calc-row-current-week' : undefined}>
+                        <td style={{ fontWeight: 600, color: 'var(--gray-500)' }}>{row.week_number}</td>
+                        <td>
+                          <input
+                            type="number"
+                            min="0"
+                            step="1"
+                            value={row.actual}
+                            placeholder="0"
+                            onChange={e => updateAfwCell(i, 'actual', e.target.value)}
+                          />
+                        </td>
+                        <td className="afw-status-cell">
+                          {hasOwnEntry ? (
+                            <span className="afw-status-own">This week's actual</span>
+                          ) : resolved ? (
+                            <span className="afw-status-carried">
+                              Using latest {resolved.source === 'actual' ? 'actual' : 'override'}: {resolved.weightGrams} g from W{resolved.asOfWeek}
+                            </span>
+                          ) : (
+                            <span className="afw-status-none">No actual yet</span>
+                          )}
+                        </td>
+                        <td className="afw-override-cell">
+                          <label className="afw-override-toggle">
+                            <input
+                              type="checkbox"
+                              checked={row.overrideEnabled}
+                              onChange={() => toggleAfwOverride(i)}
+                            />
+                            Override
+                          </label>
+                          {row.overrideEnabled && (
+                            <input
+                              type="number"
+                              min="0"
+                              step="1"
+                              value={row.override}
+                              placeholder="0"
+                              onChange={e => updateAfwCell(i, 'override', e.target.value)}
+                              className="afw-override-input"
+                              title="Manual estimate for a not-yet-harvested week — distinct from a measured actual, and never overwrites one"
+                            />
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </div>
+          </>
         )}
       </div>
     </>

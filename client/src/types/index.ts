@@ -112,13 +112,14 @@ export interface HarvestTimingProfile {
   updated_at: string;
 }
 
-export interface FruitWeightByWeek {
+export interface HarvestAfwByWeek {
   id: string;
   organization_id?: string | null;
   variety_id: string;
   year: number;
-  week_number: number;
+  week_number: number; // harvest week, not set week
   weight_grams: number;
+  source: 'actual' | 'override';
   created_at: string;
   updated_at: string;
 }

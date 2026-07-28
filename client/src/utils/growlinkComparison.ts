@@ -2,7 +2,7 @@
 //
 // This module NEVER writes anywhere. It only reads already-computed
 // projectedKg figures (from GET /harvest-projections, itself driven by
-// harvest_timing_profiles + fruit_weight_by_week — see the trace in the
+// harvest_timing_profiles + harvest_afw_by_week — see the trace in the
 // commit that added this file) and already-synced GrowLink actuals (from
 // growlink_harvest_actuals), and joins them client-side for display. It
 // must never be imported by anything that generates or stores a forecast —

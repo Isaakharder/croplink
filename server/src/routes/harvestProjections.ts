@@ -1,5 +1,6 @@
 import { Router, Request, Response, NextFunction } from 'express';
 import { supabase } from '../lib/supabase';
+import { resolveAfwCarryForward, AfwRow } from '../lib/afwCarryForward';
 
 const router = Router();
 
@@ -59,8 +60,8 @@ router.get('/', async (req: Request, res: Response, next: NextFunction) => {
         .in('variety_id', allVarietyIds)
         .eq('year', yearNum),
       supabase
-        .from('fruit_weight_by_week')
-        .select('variety_id, week_number, weight_grams')
+        .from('harvest_afw_by_week')
+        .select('variety_id, week_number, weight_grams, source')
         .in('variety_id', allVarietyIds)
         .eq('year', yearNum),
     ]);
@@ -71,11 +72,16 @@ router.get('/', async (req: Request, res: Response, next: NextFunction) => {
     const allProfiles = profilesResult.data ?? [];
     const allWeights = weightsResult.data ?? [];
 
-    // Build weight lookup: varietyId → weekNumber → weight_grams
-    const weightMap: Record<string, Record<number, number>> = {};
+    // Group AFW rows by variety — resolved to a per-harvest-week
+    // carry-forward map further down, once per variety.
+    const afwRowsByVariety: Record<string, AfwRow[]> = {};
     for (const w of allWeights) {
-      if (!weightMap[w.variety_id]) weightMap[w.variety_id] = {};
-      weightMap[w.variety_id][w.week_number] = w.weight_grams;
+      if (!afwRowsByVariety[w.variety_id]) afwRowsByVariety[w.variety_id] = [];
+      afwRowsByVariety[w.variety_id].push({
+        week_number: w.week_number,
+        weight_grams: w.weight_grams,
+        source: w.source,
+      });
     }
 
     // Aggregation maps
@@ -101,12 +107,16 @@ router.get('/', async (req: Request, res: Response, next: NextFunction) => {
     for (const variety of varieties) {
       const profiles = allProfiles.filter((p: { variety_id: string }) => p.variety_id === variety.id);
       const area = Number(variety.area_m2) || 0;
-      const weights = weightMap[variety.id] ?? {};
       const colorKey = variety.color ?? 'Unknown';
+      const resolvedAfw = resolveAfwCarryForward(afwRowsByVariety[variety.id] ?? []);
 
-      // Compute projected fruit/m² and kg per harvest week.
-      // AFW is looked up by SET week (matches how the Calculator saves it:
-      // fruit_weight_by_week.week_number = set_week_number).
+      // Fruit timing is unchanged: set-week fruit still distributes into
+      // harvest weeks via the learned +4..+10 profile. AFW/kg conversion is
+      // separate — it's looked up by HARVEST week, using the latest actual
+      // (or manual override) known as of that week, carried forward until a
+      // newer one is entered. This is why the same set-week profile can
+      // contribute different kg to different harvest weeks even though the
+      // fruit count contribution is identical.
       const projectedByWeek: Record<number, number> = {};
       const kgByWeek: Record<number, number> = {};
       for (let w = 1; w <= 52; w++) { projectedByWeek[w] = 0; kgByWeek[w] = 0; }
@@ -114,7 +124,6 @@ router.get('/', async (req: Request, res: Response, next: NextFunction) => {
       for (const profile of profiles) {
         const setWeek = profile.set_week_number as number;
         const setAmount = Number(profile.avg_fruit_set) || 0;
-        const setWeekAfw = weights[setWeek] ?? 0; // AFW keyed by set week
 
         for (const [field, offset] of percentFields) {
           const pct = Number(profile[field]) || 0;
@@ -123,8 +132,9 @@ router.get('/', async (req: Request, res: Response, next: NextFunction) => {
           if (harvestWeek >= 1 && harvestWeek <= 52) {
             const fruitContrib = setAmount * (pct / 100);
             projectedByWeek[harvestWeek] += fruitContrib;
-            if (setWeekAfw > 0 && area > 0) {
-              kgByWeek[harvestWeek] += fruitContrib * area * setWeekAfw / 1000;
+            const afw = resolvedAfw.get(harvestWeek);
+            if (afw && afw.weightGrams > 0 && area > 0) {
+              kgByWeek[harvestWeek] += fruitContrib * area * afw.weightGrams / 1000;
             }
           }
         }
