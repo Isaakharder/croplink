@@ -72,13 +72,13 @@ create or replace function renew_climate_rollup_phase_lock(
   p_lease_seconds integer default 600
 ) returns boolean as $$
 declare
-  renewed boolean;
+  affected_rows integer;
 begin
   update climate_rollup_phase_locks
   set lease_expires_at = now() + (p_lease_seconds || ' seconds')::interval
   where phase_id = p_phase_id and locked_by = p_job_id;
-  get diagnostics renewed = row_count > 0;
-  return renewed;
+  get diagnostics affected_rows = row_count;
+  return affected_rows > 0;
 end;
 $$ language plpgsql;
 
@@ -115,7 +115,7 @@ declare
   pid uuid;
   still_valid boolean;
 begin
-  foreach pid in array (select array_agg(x order by x) from unnest(p_phase_ids) as x) loop
+  foreach pid in array (select coalesce(array_agg(x order by x), array[]::uuid[]) from unnest(p_phase_ids) as x) loop
     select (locked_by = p_job_id and lease_expires_at > now())
       into still_valid
       from climate_rollup_phase_locks

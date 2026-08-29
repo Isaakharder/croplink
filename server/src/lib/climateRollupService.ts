@@ -534,7 +534,7 @@ export async function rollupClimateReadingRange(startIso: string, endIso: string
   // was computed only to seed carry-forward correctly and is deliberately
   // NOT written here.
   const { core: corePhaseRows } = partitionCoreRows(allPhaseRows, startIso);
-  const { core: coreVarietyRows } = partitionCoreRows(allVarietyRows, startIso);
+  const { core: coreVarietyRows, context: contextVarietyRows } = partitionCoreRows(allVarietyRows, startIso);
 
   // Concurrency protection (Phase 4): serialize the WRITE step for any
   // phase this job is about to touch, so two jobs with overlapping ranges
@@ -588,9 +588,15 @@ export async function rollupClimateReadingRange(startIso: string, endIso: string
       }
     }
     if (coreVarietyRows.length > 0) {
-      // contextRows = the FULL widened set (core + pre-startIso context),
-      // in memory -- so the features step's own one-hour lookback never
-      // depends on a DB row that might not exist yet either. Features are
+      // contextRows = only the pre-startIso portion of the widened set, in
+      // memory -- so the features step's own one-hour lookback never depends
+      // on a DB row that might not exist yet either. Deliberately NOT the
+      // core rows too: those were just written with real DB-assigned ids,
+      // and recomputeVarietyClimateFeatures's merge gives every contextRows
+      // entry an id:'' placeholder (safe only for genuinely-skipped
+      // before-range rows) -- passing core rows here would let that
+      // placeholder clobber a real id and break the UUID-typed
+      // source_variety_hourly_id column on insert. Features are
       // deliberately NOT inside the lease-checked transaction above: they're
       // a pure, deterministic function of the now-safely-written variety-
       // hourly data, so even a just-expired owner computing them afterward
@@ -598,7 +604,7 @@ export async function rollupClimateReadingRange(startIso: string, endIso: string
       // worst, never wrong, and idempotent upserts make redundant harmless.
       await recomputeVarietyClimateFeatures(
         coreVarietyRows.map((r) => ({ varietyId: r.variety_id, measuredAt: r.measured_at })),
-        allVarietyRows
+        contextVarietyRows
       );
     }
   } finally {
