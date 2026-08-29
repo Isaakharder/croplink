@@ -1,6 +1,7 @@
 import { Router, Request, Response, NextFunction } from 'express';
 import { supabase } from '../lib/supabase';
 import { chunkArray } from '../lib/chunkArray';
+import { fetchAllRows } from '../lib/paginatedFetch';
 
 const router = Router();
 
@@ -60,39 +61,50 @@ router.get('/', async (req: Request, res: Response, next: NextFunction) => {
     const stemIds = (stemsData ?? []).map((s: { id: string }) => s.id);
     if (stemIds.length === 0) return res.json(makeEmpty52());
 
-    // Active nodes under those stems (includes side-shoots)
-    const { data: nodesData, error: nErr } = await supabase
-      .from('plant_nodes')
-      .select('id, measurement_stem_id')
-      .in('measurement_stem_id', stemIds)
-      .eq('is_active', true);
-    if (nErr) throw new Error(nErr.message);
+    // Active nodes under those stems (includes side-shoots).
+    // Paginated: a variety's node count is not bounded by its stem count in
+    // any way that stays under Supabase's default 1,000-row response cap —
+    // side-shoots accumulate through the season on top of main-stem
+    // positions (confirmed live: 2,259 nodes under just 56 stems for one
+    // variety). An unpaginated select() here silently returned only the
+    // first 1,000, skewed toward earlier-created nodes, which corrupted
+    // later set-weeks' counts far more than earlier ones. See the
+    // 2026-08-28 pagination investigation.
+    const nodesData = await fetchAllRows<{ id: string; measurement_stem_id: string }>(() =>
+      supabase
+        .from('plant_nodes')
+        .select('id, measurement_stem_id')
+        .in('measurement_stem_id', stemIds)
+        .eq('is_active', true)
+    );
 
-    const nodeIds = (nodesData ?? []).map((n: { id: string }) => n.id);
+    const nodeIds = nodesData.map((n) => n.id);
     if (nodeIds.length === 0) return res.json(makeEmpty52());
 
     // node_id → stem_id lookup for counting measured stems
     const stemByNode: Record<string, string> = {};
-    (nodesData as { id: string; measurement_stem_id: string }[]).forEach(n => {
+    nodesData.forEach(n => {
       stemByNode[n.id] = n.measurement_stem_id;
     });
 
-    // Weekly statuses for those nodes in the requested year.
-    // Large varieties can have hundreds of nodes, which overflows the URL/header
-    // size limit if passed to a single .in() filter. Batch the lookup instead.
+    // Weekly statuses for those nodes in the requested year. Batched by
+    // node (100 at a time — large varieties can have hundreds of nodes,
+    // which overflows the URL/header size limit if passed to a single
+    // .in() filter) AND paginated within each batch (a single 100-node
+    // batch can itself exceed 1,000 status rows across a season). Both
+    // limits are independent and both apply.
     const statusBatchResults = await Promise.all(
       chunkArray(nodeIds, 100).map(ids =>
-        supabase
-          .from('weekly_node_statuses')
-          .select('week_number, status, plant_node_id')
-          .in('plant_node_id', ids)
-          .eq('year', Number(year))
+        fetchAllRows<{ week_number: number; status: string; plant_node_id: string }>(() =>
+          supabase
+            .from('weekly_node_statuses')
+            .select('week_number, status, plant_node_id')
+            .in('plant_node_id', ids)
+            .eq('year', Number(year))
+        )
       )
     );
-    for (const { error: wsErr } of statusBatchResults) {
-      if (wsErr) throw new Error(wsErr.message);
-    }
-    const statuses = statusBatchResults.flatMap(({ data }) => data ?? []);
+    const statuses = statusBatchResults.flat();
 
     // Aggregate per week
     const weekMap: Record<number, { setFruitCount: number; measuredStems: Set<string> }> = {};
@@ -100,10 +112,8 @@ router.get('/', async (req: Request, res: Response, next: NextFunction) => {
       weekMap[w] = { setFruitCount: 0, measuredStems: new Set() };
     }
 
-    for (const s of statuses ?? []) {
-      const w = (s as { week_number: number; status: string; plant_node_id: string }).week_number;
-      const status = (s as { week_number: number; status: string; plant_node_id: string }).status;
-      const pid = (s as { week_number: number; status: string; plant_node_id: string }).plant_node_id;
+    for (const s of statuses) {
+      const { week_number: w, status, plant_node_id: pid } = s;
       if (w < 1 || w > 52) continue;
       const stemId = stemByNode[pid];
       if (stemId) weekMap[w].measuredStems.add(stemId);

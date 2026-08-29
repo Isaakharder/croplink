@@ -3,18 +3,12 @@ import multer from 'multer';
 import { createHash, randomUUID } from 'crypto';
 import { supabase } from '../lib/supabase';
 import { chunkArray } from '../lib/chunkArray';
-import { fetchAllRows } from '../lib/fetchAllRows';
-import { parseRidderBlockSummary, zonedTimeToUtc, GREENHOUSE_TIME_ZONE, type ZoneReading } from '../lib/ridderParser';
-import { computeVarietyHourlyRow, computePhaseHourlyRow, localCalendarDateKey, type VarietyHourlyResult, type PhaseHourlyResult } from '../lib/climateAveraging';
+import { fetchAllRows } from '../lib/paginatedFetch';
+import { parseRidderBlockSummary, type ZoneReading } from '../lib/ridderParser';
 import { canonicalizeStagedReadings, type StagedReadingLike, type StagedFileLike } from '../lib/climateDuplicates';
 import { previewTimestampCorrection, applyTimestampCorrection } from '../lib/climateCorrections';
 import { recomputeVarietyClimateFeatures } from '../lib/climateFeatureRecompute';
-
-/** Start of the greenhouse-local calendar day containing `isoTimestamp`, as a UTC ISO string. */
-function greenhouseDayStartUtc(isoTimestamp: string): string {
-  const [y, m, d] = localCalendarDateKey(new Date(isoTimestamp), GREENHOUSE_TIME_ZONE).split('-').map(Number);
-  return zonedTimeToUtc(y, m, d, 0, 0, 0, GREENHOUSE_TIME_ZONE).toISOString();
-}
+import { loadZoneTopology, computePhaseAndVarietyHourlyRows, computeRollupReadWindow, partitionCoreRows, type ReadingLike } from '../lib/climateRollupService';
 
 const router = Router();
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024, files: 5000 } });
@@ -26,17 +20,6 @@ function sameValue(a: number | null, b: number | null): boolean {
   if (a == null && b == null) return true;
   if (a == null || b == null) return false;
   return Math.abs(a - b) < VALUE_EPSILON;
-}
-
-// Values are rounded to their destination column's precision BEFORE storage
-// and BEFORE conflict comparison — otherwise a freshly-computed average
-// (kept at higher internal precision) never exactly equals the same value
-// after it's round-tripped through a numeric(_,2)/numeric(_,3) column, and
-// every re-import of genuinely identical data would falsely show as a conflict.
-function round(v: number | null, decimals: number): number | null {
-  if (v == null) return null;
-  const f = 10 ** decimals;
-  return Math.round(v * f) / f;
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -350,8 +333,8 @@ router.post('/corrections/apply', async (req: Request, res: Response, next: Next
 // ═══════════════════════════════════════════════════════════════════════
 
 async function buildPreview(batchId: string) {
-  const files = await fetchAllRows((from, to) =>
-    supabase.from('climate_import_staged_files').select('*').eq('batch_id', batchId).range(from, to)
+  const files = await fetchAllRows(() =>
+    supabase.from('climate_import_staged_files').select('*').eq('batch_id', batchId)
   );
 
   const parsedFiles = files.filter((f) => f.status === 'parsed' || f.status === 'repair');
@@ -399,8 +382,8 @@ async function buildPreview(batchId: string) {
   // Full staged readings — paginated (a real batch easily exceeds PostgREST's
   // default 1000-row cap) — used both for detected zones/metrics and for the
   // same-batch duplicate-reading analysis below.
-  const stagedReadings = await fetchAllRows<StagedReadingLike>((from, to) =>
-    supabase.from('climate_import_staged_readings').select('*').eq('batch_id', batchId).range(from, to)
+  const stagedReadings = await fetchAllRows<StagedReadingLike>(() =>
+    supabase.from('climate_import_staged_readings').select('*').eq('batch_id', batchId)
   );
   const detectedZones = Array.from(new Set(stagedReadings.map((r) => r.zone_label))).sort();
   const detectedMetrics = Array.from(new Set(stagedReadings.map((r) => r.metric_name))).sort();
@@ -514,8 +497,8 @@ interface Conflict {
 }
 
 async function buildCommitPlan(batchId: string, resolutions: Record<string, string> = {}) {
-  const files = await fetchAllRows((from, to) =>
-    supabase.from('climate_import_staged_files').select('*').eq('batch_id', batchId).in('status', ['parsed', 'repair']).range(from, to)
+  const files = await fetchAllRows(() =>
+    supabase.from('climate_import_staged_files').select('*').eq('batch_id', batchId).in('status', ['parsed', 'repair'])
   );
 
   // Files with a >1-hour System-Time-vs-filename discrepancy must not
@@ -541,8 +524,8 @@ async function buildCommitPlan(batchId: string, resolutions: Record<string, stri
     };
   }
 
-  const rawReadings = await fetchAllRows<StagedReadingLike>((from, to) =>
-    supabase.from('climate_import_staged_readings').select('*').eq('batch_id', batchId).range(from, to)
+  const rawReadings = await fetchAllRows<StagedReadingLike>(() =>
+    supabase.from('climate_import_staged_readings').select('*').eq('batch_id', batchId)
   );
 
   const fileMetaById = new Map<string, StagedFileLike>(
@@ -587,47 +570,58 @@ async function buildCommitPlan(batchId: string, resolutions: Record<string, stri
   const minTs = measuredAts.sort()[0];
   const maxTs = measuredAts.sort()[measuredAts.length - 1];
 
-  const { data: zones } = await supabase.from('zones').select('id, name, import_key, phase_id');
-  const zoneByImportKey = new Map((zones ?? []).map((z) => [z.import_key, z]));
-
-  const { data: varietyZones } = await supabase.from('variety_zones').select('variety_id, zone_id');
-  const { data: zoneRows } = await supabase.from('zones').select('id, import_key');
-  const zoneImportKeyById = new Map((zoneRows ?? []).map((z) => [z.id, z.import_key]));
-  const varietyToZoneLabels = new Map<string, string[]>();
-  for (const vz of varietyZones ?? []) {
-    const label = zoneImportKeyById.get(vz.zone_id);
-    if (!label) continue;
-    if (!varietyToZoneLabels.has(vz.variety_id)) varietyToZoneLabels.set(vz.variety_id, []);
-    varietyToZoneLabels.get(vz.variety_id)!.push(label);
-  }
+  const topology = await loadZoneTopology();
+  const { zoneByImportKey, varietyToZoneLabels } = topology;
 
   // Existing permanent data in the batch's timestamp range, for conflict
   // detection. Paginated — a large batch's date range can easily hold more
   // than PostgREST's default 1000-row cap worth of existing readings.
   const existingReadings = minTs
-    ? await fetchAllRows((from, to) =>
-        supabase.from('climate_readings').select('zone_label, metric_name, measured_at, value').gte('measured_at', minTs).lte('measured_at', maxTs).range(from, to)
+    ? await fetchAllRows(() =>
+        supabase.from('climate_readings').select('zone_label, metric_name, measured_at, value').gte('measured_at', minTs).lte('measured_at', maxTs)
       )
     : [];
   const existingReadingMap = new Map(existingReadings.map((r) => [`${r.zone_label}|${r.metric_name}|${r.measured_at}`, r.value as number]));
 
-  // Widened lower bound: the previous same-greenhouse-day cumulative reading
-  // needed to seed irrigation/radiation deltas may fall BEFORE this batch's
-  // own minTs (e.g. it was committed in an earlier batch), so this can't be
-  // scoped to [minTs, maxTs] or the very first hour(s) of a new batch would
-  // wrongly look "first_reading_of_day" even when a same-day prior row exists.
-  const dayStart = minTs ? greenhouseDayStartUtc(minTs) : null;
+  // Raw-context readings (Round 10, "unify manual and automated on the same
+  // closure"): fetched STRICTLY OUTSIDE [minTs, maxTs] -- before minTs for
+  // carry-forward seeding, after maxTs so a gap this batch fills in doesn't
+  // leave an ALREADY-COMMITTED later hour stuck stale. Deliberately excludes
+  // [minTs, maxTs] itself so the batch's own (possibly-corrected) content
+  // always wins for its own timestamps, never shadowed by a same-timestamp
+  // row already in climate_readings. Same window math as the automated
+  // rollup path (computeRollupReadWindow) -- proven live to close every
+  // traced closure case; using a DIFFERENT, narrower window here would be
+  // exactly the kind of quietly-different boundary behavior this task asked
+  // to eliminate.
+  const contextWindow = minTs ? computeRollupReadWindow(minTs, maxTs) : null;
+  const [beforeContext, afterContext] = contextWindow
+    ? await Promise.all([
+        fetchAllRows<ReadingLike>(() =>
+          supabase.from('climate_readings').select('zone_label, measured_at, metric_name, value, unit').gte('measured_at', contextWindow.readStart).lt('measured_at', minTs)
+        ),
+        fetchAllRows<ReadingLike>(() =>
+          supabase.from('climate_readings').select('zone_label, measured_at, metric_name, value, unit').gt('measured_at', maxTs).lte('measured_at', contextWindow.readEnd)
+        ),
+      ])
+    : [[], []];
+  const rawContextReadings: ReadingLike[] = [...beforeContext, ...afterContext];
 
-  const existingVarietyHourly = dayStart
-    ? await fetchAllRows((from, to) =>
-        supabase.from('variety_climate_hourly').select('*').gte('measured_at', dayStart).lte('measured_at', maxTs).range(from, to)
+  // Existing derived rows for conflict-diffing -- scoped to [minTs, readEnd],
+  // matching the "core" range this commit will now conflict-check (which,
+  // same as the automated path, extends past maxTs through the closure
+  // boundary so a stale downstream hour this batch's gap-fill affects gets
+  // surfaced as a conflict too, not silently left stale).
+  const existingVarietyHourly = minTs && contextWindow
+    ? await fetchAllRows(() =>
+        supabase.from('variety_climate_hourly').select('*').gte('measured_at', minTs).lte('measured_at', contextWindow.readEnd)
       )
     : [];
   const existingVarietyHourlyMap = new Map(existingVarietyHourly.map((r) => [`${r.variety_id}|${r.measured_at}`, r]));
 
-  const existingPhaseHourly = dayStart
-    ? await fetchAllRows((from, to) =>
-        supabase.from('phase_climate_hourly').select('*').gte('measured_at', dayStart).lte('measured_at', maxTs).range(from, to)
+  const existingPhaseHourly = minTs && contextWindow
+    ? await fetchAllRows(() =>
+        supabase.from('phase_climate_hourly').select('*').gte('measured_at', minTs).lte('measured_at', contextWindow.readEnd)
       )
     : [];
   const existingPhaseHourlyMap = new Map(existingPhaseHourly.map((r) => [`${r.phase_id}|${r.measured_at}`, r]));
@@ -708,164 +702,76 @@ async function buildCommitPlan(batchId: string, resolutions: Record<string, stri
     });
   }
 
-  // ── Phase hourly (radiation, drain) ──────────────────────────────────────
+  // Phase/variety hourly computation is shared with the automated Climate
+  // Agent rollup and the backfill script (climateRollupService.ts) — this is
+  // the ONE place the math lives now. This flow's own conflict-diffing
+  // behavior (surface a human-resolvable conflict when a computed value
+  // disagrees with what's already stored) stays here, since it's specific to
+  // the manual review UX and doesn't apply to automated/backfill rollup.
+  //
+  // Carry-forward seeding is now raw-context-driven (Round 10, "unify manual
+  // and automated on the same closure"), same as the automated path:
+  // existingPhaseHourly/existingVarietyHourly are passed empty here and used
+  // ONLY afterward, for conflict-diffing against what's already stored —
+  // never as the carry-forward source. rawContextReadings supplies that
+  // instead, merged with this batch's own readings so ONE call's internal
+  // same-call carry-forward loop (the mechanism already proven correct) sees
+  // the whole picture. The computed output spans [contextWindow.readStart,
+  // contextWindow.readEnd]; only rows at/after minTs (this batch's own
+  // earliest timestamp) are "core" -- conflict-diffed and potentially
+  // written. Rows before minTs were computed purely to seed carry-forward
+  // and are discarded (whichever commit actually owns that earlier period
+  // already wrote it, or will).
+  const mergedReadings: ReadingLike[] = [...rawContextReadings, ...readings];
+  const { phaseHourlyRows: allComputedPhaseRows, varietyHourlyRows: allComputedVarietyRows } = computePhaseAndVarietyHourlyRows({
+    readings: mergedReadings, topology, existingPhaseHourly: [], existingVarietyHourly: [], sourceBatchId: batchId,
+  });
+  const { core: computedPhaseRows } = minTs ? partitionCoreRows(allComputedPhaseRows, minTs) : { core: allComputedPhaseRows };
+  const { core: computedVarietyRows } = minTs ? partitionCoreRows(allComputedVarietyRows, minTs) : { core: allComputedVarietyRows };
+
   const phaseHourlyRows: ConflictRow[] = [];
-  const readingsByTimestamp = new Map<string, typeof readings>();
-  for (const r of readings) {
-    if (!readingsByTimestamp.has(r.measured_at)) readingsByTimestamp.set(r.measured_at, []);
-    readingsByTimestamp.get(r.measured_at)!.push(r);
-  }
-
-  const phasesTouched = new Set(
-    Array.from(zoneByImportKey.values()).filter((z) => readings.some((r) => r.zone_label === z.import_key)).map((z) => z.phase_id)
-  );
-
-  // Track running cumulative per phase across this batch's chronological timestamps.
-  const sortedTimestamps = Array.from(readingsByTimestamp.keys()).sort();
-  const phaseRunningCumulative = new Map<string, { value: number; measuredAt: Date }>();
-  for (const phaseId of phasesTouched) {
-    const existingForPhase = existingPhaseHourly
-      .filter((p) => p.phase_id === phaseId && new Date(p.measured_at) < new Date(sortedTimestamps[0] ?? 0))
-      .sort((a, b) => new Date(b.measured_at).getTime() - new Date(a.measured_at).getTime())[0];
-    if (existingForPhase?.radiation_cumulative_j_cm2 != null) {
-      phaseRunningCumulative.set(phaseId, { value: existingForPhase.radiation_cumulative_j_cm2, measuredAt: new Date(existingForPhase.measured_at) });
-    }
-  }
-
-  for (const ts of sortedTimestamps) {
-    const rowsAtTs = readingsByTimestamp.get(ts)!;
-    for (const phaseId of phasesTouched) {
-      const zonesInPhase = Array.from(zoneByImportKey.values()).filter((z) => z.phase_id === phaseId).map((z) => z.import_key);
-      const radiationReading = rowsAtTs.find((r) => r.metric_name === 'radiation_sum_j_cm2' && zonesInPhase.includes(r.zone_label));
-      const drainReading = rowsAtTs.find((r) => r.metric_name === 'drain_water_pct' && zonesInPhase.includes(r.zone_label));
-      if (!radiationReading && !drainReading) continue;
-
-      const previous = phaseRunningCumulative.get(phaseId) ?? null;
-      const computed: PhaseHourlyResult = computePhaseHourlyRow({
-        measuredAt: new Date(ts),
-        radiationValue: radiationReading?.value ?? null,
-        drainValue: drainReading?.value ?? null,
-        sourceZoneLabel: radiationReading?.zone_label ?? drainReading?.zone_label ?? null,
-        previousRadiationCumulative: previous,
-        timeZone: GREENHOUSE_TIME_ZONE,
+  for (const row of computedPhaseRows) {
+    const key = `${row.phase_id}|${row.measured_at}`;
+    const existing = existingPhaseHourlyMap.get(key);
+    // Phase-hourly conflicts are folded into the reading-level conflict set
+    // only when the underlying cumulative value actually differs.
+    if (existing && !sameValue(existing.radiation_cumulative_j_cm2, row.radiation_cumulative_j_cm2)) {
+      const conflictId = `phase:${key}`;
+      conflicts.push({
+        conflictId, kind: 'reading',
+        description: `Phase radiation @ ${row.measured_at}`,
+        existingValue: existing.radiation_cumulative_j_cm2, newValue: row.radiation_cumulative_j_cm2,
       });
-      if (computed.radiationCumulativeJCm2 != null) {
-        phaseRunningCumulative.set(phaseId, { value: computed.radiationCumulativeJCm2, measuredAt: new Date(ts) });
-      }
-
-      const key = `${phaseId}|${ts}`;
-      const existing = existingPhaseHourlyMap.get(key);
-      const radiationCumulative = round(computed.radiationCumulativeJCm2, 2);
-      const row = {
-        organization_id: null, phase_id: phaseId, measured_at: ts,
-        radiation_cumulative_j_cm2: radiationCumulative,
-        radiation_interval_delta_j_cm2: round(computed.radiationIntervalDeltaJCm2, 2),
-        radiation_interval_minutes: computed.radiationIntervalMinutes,
-        radiation_quality_flag: computed.radiationQualityFlag,
-        drain_water_pct: round(computed.drainWaterPct, 2),
-        source_zone_label: computed.sourceZoneLabel,
-        source_batch_id: batchId,
-      };
-      // Phase-hourly conflicts are folded into the reading-level conflict set
-      // only when the underlying cumulative value actually differs.
-      if (existing && !sameValue(existing.radiation_cumulative_j_cm2, radiationCumulative)) {
-        conflicts.push({
-          conflictId: `phase:${key}`, kind: 'reading',
-          description: `Phase radiation @ ${ts}`,
-          existingValue: existing.radiation_cumulative_j_cm2, newValue: radiationCumulative,
-        });
-        phaseHourlyRows.push({ conflictId: `phase:${key}`, ...row });
-      } else {
-        phaseHourlyRows.push(row);
-      }
+      phaseHourlyRows.push({ conflictId, ...row });
+    } else {
+      phaseHourlyRows.push({ ...row });
     }
   }
 
-  // ── Variety hourly (averages + irrigation delta) ─────────────────────────
   const varietyHourlyRows: ConflictRow[] = [];
-  const varietiesTouched = Array.from(varietyToZoneLabels.entries()).filter(([, zoneLabels]) =>
-    zoneLabels.some((zl) => readings.some((r) => r.zone_label === zl))
-  );
-
-  const varietyRunningIrrigation = new Map<string, { value: number; measuredAt: Date }>();
-  for (const [varietyId] of varietiesTouched) {
-    const existingForVariety = existingVarietyHourly
-      .filter((v) => v.variety_id === varietyId && new Date(v.measured_at) < new Date(sortedTimestamps[0] ?? 0))
-      .sort((a, b) => new Date(b.measured_at).getTime() - new Date(a.measured_at).getTime())[0];
-    if (existingForVariety?.irrigation_cumulative_avg_ml != null) {
-      varietyRunningIrrigation.set(varietyId, { value: existingForVariety.irrigation_cumulative_avg_ml, measuredAt: new Date(existingForVariety.measured_at) });
-    }
-  }
-
-  for (const ts of sortedTimestamps) {
-    const rowsAtTs = readingsByTimestamp.get(ts)!;
-    for (const [varietyId, zoneLabels] of varietiesTouched) {
-      const anyZoneHasDataThisHour = zoneLabels.some((zl) => rowsAtTs.some((r) => r.zone_label === zl));
-      if (!anyZoneHasDataThisHour) continue;
-
-      const zonesForPhase = zoneLabels.map((zl) => zoneByImportKey.get(zl)).filter(Boolean);
-      const phaseId = zonesForPhase[0]?.phase_id ?? null;
-      const existingPhaseForTs = phaseId ? existingPhaseHourlyMap.get(`${phaseId}|${ts}`) : undefined;
-      const justComputedPhase = phaseId ? phaseHourlyRows.find((p) => p.phase_id === phaseId && p.measured_at === ts) : undefined;
-      const phaseRadiation = justComputedPhase
-        ? { cumulativeJCm2: justComputedPhase.radiation_cumulative_j_cm2 as number | null, intervalDeltaJCm2: justComputedPhase.radiation_interval_delta_j_cm2 as number | null }
-        : existingPhaseForTs
-          ? { cumulativeJCm2: existingPhaseForTs.radiation_cumulative_j_cm2, intervalDeltaJCm2: existingPhaseForTs.radiation_interval_delta_j_cm2 }
-          : null;
-
-      const previousIrrigation = varietyRunningIrrigation.get(varietyId) ?? null;
-      const computed: VarietyHourlyResult = computeVarietyHourlyRow({
-        measuredAt: new Date(ts),
-        linkedZoneLabels: zoneLabels,
-        readings: rowsAtTs.map((r) => ({ zoneLabel: r.zone_label, metricName: r.metric_name, value: r.value, unit: r.unit ?? '' })),
-        previousIrrigationCumulative: previousIrrigation,
-        phaseId,
-        phaseRadiation,
-        timeZone: GREENHOUSE_TIME_ZONE,
-      });
-      if (computed.irrigationCumulativeAvgMl != null) {
-        varietyRunningIrrigation.set(varietyId, { value: computed.irrigationCumulativeAvgMl, measuredAt: new Date(ts) });
+  for (const row of computedVarietyRows) {
+    const key = `${row.variety_id}|${row.measured_at}`;
+    const existing = existingVarietyHourlyMap.get(key);
+    if (existing) {
+      const differs =
+        !sameValue(existing.air_temperature_avg_c, row.air_temperature_avg_c) ||
+        !sameValue(existing.relative_humidity_avg_pct, row.relative_humidity_avg_pct) ||
+        !sameValue(existing.co2_avg_ppm, row.co2_avg_ppm) ||
+        !sameValue(existing.ec_avg, row.ec_avg) ||
+        !sameValue(existing.ph_avg, row.ph_avg) ||
+        !sameValue(existing.irrigation_cumulative_avg_ml, row.irrigation_cumulative_avg_ml);
+      if (differs) {
+        const conflictId = `variety:${key}`;
+        conflicts.push({
+          conflictId, kind: 'variety_hourly',
+          description: `Variety average @ ${row.measured_at}`,
+          existingValue: existing, newValue: row,
+        });
+        varietyHourlyRows.push({ conflictId, ...row });
       }
-
-      const key = `${varietyId}|${ts}`;
-      const existing = existingVarietyHourlyMap.get(key);
-      const row = {
-        organization_id: null, variety_id: varietyId, measured_at: ts,
-        air_temperature_avg_c: round(computed.airTemperatureAvgC, 2), air_temperature_zone_count: computed.airTemperatureZoneCount,
-        relative_humidity_avg_pct: round(computed.relativeHumidityAvgPct, 2), relative_humidity_zone_count: computed.relativeHumidityZoneCount,
-        co2_avg_ppm: round(computed.co2AvgPpm, 2), co2_zone_count: computed.co2ZoneCount,
-        ec_avg: round(computed.ecAvg, 3), ec_zone_count: computed.ecZoneCount,
-        ph_avg: round(computed.phAvg, 3), ph_zone_count: computed.phZoneCount,
-        irrigation_cumulative_avg_ml: round(computed.irrigationCumulativeAvgMl, 2), irrigation_zone_count: computed.irrigationZoneCount,
-        irrigation_interval_delta_ml: round(computed.irrigationIntervalDeltaMl, 2), irrigation_interval_minutes: computed.irrigationIntervalMinutes,
-        irrigation_quality_flag: computed.irrigationQualityFlag,
-        expected_zone_count: computed.expectedZoneCount,
-        phase_id: computed.phaseId, radiation_cumulative_j_cm2: round(computed.radiationCumulativeJCm2, 2), radiation_interval_delta_j_cm2: round(computed.radiationIntervalDeltaJCm2, 2),
-        quality_warnings: computed.warnings,
-        source_batch_id: batchId,
-      };
-
-      if (existing) {
-        const differs =
-          !sameValue(existing.air_temperature_avg_c, row.air_temperature_avg_c) ||
-          !sameValue(existing.relative_humidity_avg_pct, row.relative_humidity_avg_pct) ||
-          !sameValue(existing.co2_avg_ppm, row.co2_avg_ppm) ||
-          !sameValue(existing.ec_avg, row.ec_avg) ||
-          !sameValue(existing.ph_avg, row.ph_avg) ||
-          !sameValue(existing.irrigation_cumulative_avg_ml, row.irrigation_cumulative_avg_ml);
-        if (differs) {
-          conflicts.push({
-            conflictId: `variety:${key}`, kind: 'variety_hourly',
-            description: `Variety average @ ${ts}`,
-            existingValue: existing, newValue: row,
-          });
-          varietyHourlyRows.push({ conflictId: `variety:${key}`, ...row });
-          continue;
-        }
-        continue; // identical — nothing to do
-      }
-      varietyHourlyRows.push(row);
+      continue; // identical — nothing to do
     }
+    varietyHourlyRows.push({ ...row });
   }
 
   return {

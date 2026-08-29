@@ -1,6 +1,7 @@
 import { Router, Request, Response, NextFunction } from 'express';
 import { supabase } from '../lib/supabase';
 import { getConnectionRow } from './growlinkConnection';
+import { fetchAllRows } from '../lib/paginatedFetch';
 
 // Mostly read-only: these records are owned by GrowLink. The one exception
 // is POST /sync below, which is the "future sync service" this table was
@@ -166,12 +167,20 @@ router.post('/sync', async (_req: Request, res: Response, next: NextFunction) =>
     // codebase) this looks up existing rows explicitly by growlink_harvest_key
     // instead of relying on ON CONFLICT to find them. Selects the full row
     // (not just id) so isUnchanged() can diff against it below.
-    const { data: existingRows, error: existingError } = await supabase
-      .from('growlink_harvest_actuals')
-      .select('id, growlink_harvest_key, variety_id, kg, year, week_number, growlink_variety_key, source_payload')
-      .is('organization_id', null);
-    if (existingError) throw new Error(existingError.message);
-    const existingByKey = new Map((existingRows ?? []).map((r) => [r.growlink_harvest_key, r as ExistingHarvestActualRow]));
+    // Paginated defensively — currently well under the 1,000-row cap (126
+    // rows total today), but this lookup existing outright unbounded is
+    // exactly the pattern that caused silent truncation elsewhere in this
+    // codebase, and here a miss doesn't just mis-display something: it
+    // makes an already-synced record look new, producing a duplicate
+    // insert (or an update never applied to the real existing row) once
+    // this table grows past the cap.
+    const existingRows = await fetchAllRows<ExistingHarvestActualRow>(() =>
+      supabase
+        .from('growlink_harvest_actuals')
+        .select('id, growlink_harvest_key, variety_id, kg, year, week_number, growlink_variety_key, source_payload')
+        .is('organization_id', null)
+    );
+    const existingByKey = new Map(existingRows.map((r) => [r.growlink_harvest_key, r]));
 
     const now = new Date().toISOString();
     const toInsert: Record<string, unknown>[] = [];

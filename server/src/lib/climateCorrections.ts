@@ -6,7 +6,7 @@
 // left, the hour it now occupies, and the hour immediately after — because
 // each of those deltas is computed against the *previous* cumulative value.
 import { supabase } from './supabase';
-import { fetchAllRows } from './fetchAllRows';
+import { fetchAllRows } from './paginatedFetch';
 import { zonedTimeToUtc, GREENHOUSE_TIME_ZONE } from './ridderParser';
 import { computeVarietyHourlyRow, computePhaseHourlyRow, localCalendarDateKey } from './climateAveraging';
 import { recomputeVarietyClimateFeatures } from './climateFeatureRecompute';
@@ -76,16 +76,16 @@ async function computeCorrectionPlan(filename: string) {
 
   const movedReadings = alreadyCorrect
     ? []
-    : await fetchAllRows<ReadingLike & { id: string }>((from, to) =>
+    : await fetchAllRows<ReadingLike & { id: string }>(() =>
         supabase.from('climate_readings').select('id, zone_label, metric_name, value, unit')
-          .eq('source_file', filename).eq('measured_at', oldMeasuredAtUtc.toISOString()).range(from, to)
+          .eq('source_file', filename).eq('measured_at', oldMeasuredAtUtc.toISOString())
       );
 
   const conflictsAtTarget: CorrectionConflict[] = [];
   if (!alreadyCorrect && movedReadings.length > 0) {
-    const existingAtTarget = await fetchAllRows<{ zone_label: string; metric_name: string; value: number }>((from, to) =>
+    const existingAtTarget = await fetchAllRows<{ zone_label: string; metric_name: string; value: number }>(() =>
       supabase.from('climate_readings').select('zone_label, metric_name, value')
-        .eq('measured_at', newMeasuredAtUtc.toISOString()).range(from, to)
+        .eq('measured_at', newMeasuredAtUtc.toISOString())
     );
     const existingByKey = new Map(existingAtTarget.map((r) => [`${r.zone_label}|${r.metric_name}`, r.value]));
     for (const r of movedReadings) {
@@ -174,8 +174,8 @@ export async function applyTimestampCorrection(filename: string): Promise<{ corr
     // Real readings present at this hour right now, MINUS anything belonging
     // to the file being moved away from oldIso, PLUS (at newIso) the moved
     // readings re-tagged to their corrected hour.
-    const realAtTs = await fetchAllRows<ReadingLike & { source_file: string | null }>((from, to) =>
-      supabase.from('climate_readings').select('zone_label, metric_name, value, unit, source_file').eq('measured_at', ts).range(from, to)
+    const realAtTs = await fetchAllRows<ReadingLike & { source_file: string | null }>(() =>
+      supabase.from('climate_readings').select('zone_label, metric_name, value, unit, source_file').eq('measured_at', ts)
     );
     const readingsAtTs: ReadingLike[] = ts === oldIso
       ? realAtTs.filter((r) => r.source_file !== filename)
@@ -238,6 +238,7 @@ export async function applyTimestampCorrection(filename: string): Promise<{ corr
         organization_id: null, variety_id: varietyId, measured_at: ts,
         air_temperature_avg_c: computed.airTemperatureAvgC, air_temperature_zone_count: computed.airTemperatureZoneCount,
         relative_humidity_avg_pct: computed.relativeHumidityAvgPct, relative_humidity_zone_count: computed.relativeHumidityZoneCount,
+        vpd_avg_kpa: computed.vpdAvgKpa, vpd_zone_count: computed.vpdZoneCount,
         co2_avg_ppm: computed.co2AvgPpm, co2_zone_count: computed.co2ZoneCount,
         ec_avg: computed.ecAvg, ec_zone_count: computed.ecZoneCount,
         ph_avg: computed.phAvg, ph_zone_count: computed.phZoneCount,
@@ -248,6 +249,11 @@ export async function applyTimestampCorrection(filename: string): Promise<{ corr
         phase_id: computed.phaseId, radiation_cumulative_j_cm2: computed.radiationCumulativeJCm2, radiation_interval_delta_j_cm2: computed.radiationIntervalDeltaJCm2,
         quality_warnings: computed.warnings,
         source_batch_id: null,
+        temporal_covered: computed.temporalCovered,
+        zones_linked: computed.zonesLinked,
+        zones_reporting: computed.zonesReporting,
+        zone_participation_pct: computed.zoneParticipationPct,
+        zone_diagnostics: computed.zoneDiagnostics,
       });
     }
   }

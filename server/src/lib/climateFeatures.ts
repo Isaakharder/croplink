@@ -9,6 +9,8 @@
 // overridable exports so they can be recalibrated later without touching the
 // math that uses them.
 
+import { computeVpdKpaForZone } from './climateAveraging';
+
 export const DEGREE_HOUR_BASE_TEMP_C = 10;
 export const DEGREE_HOUR_UPPER_CAP_C = 30;
 
@@ -50,15 +52,13 @@ function round(v: number, decimals: number): number {
 /**
  * Saturation vapor pressure deficit (kPa) from air temperature and relative
  * humidity, using the Tetens approximation. This is an air-temperature
- * approximation of VPD (no leaf-temperature sensor exists in this pipeline),
- * consistent with how the raw hourly averages are already computed.
+ * approximation of VPD (no leaf-temperature sensor exists in this pipeline).
+ * Re-exported from climateAveraging.ts, which is now the canonical location —
+ * VPD must be computed per zone before cross-zone averaging (nonlinear in
+ * temperature), so the formula lives where the per-zone readings still are.
+ * Kept exported here under its original name for any existing caller.
  */
-export function computeVpdKpa(tempC: number | null, rhPct: number | null): number | null {
-  if (tempC == null || rhPct == null || !Number.isFinite(tempC) || !Number.isFinite(rhPct)) return null;
-  const svpKpa = 0.6108 * Math.exp((17.27 * tempC) / (tempC + 237.3));
-  const vpd = svpKpa * (1 - rhPct / 100);
-  return round(vpd, 4);
-}
+export const computeVpdKpa = computeVpdKpaForZone;
 
 export function classifyVpdBand(vpdKpa: number | null, bands: VpdBandDefinition[] = VPD_BANDS): VpdBandKey | null {
   if (vpdKpa == null) return null;
@@ -97,6 +97,8 @@ export interface VarietyClimateHourlyRowLike {
   measured_at: string;
   air_temperature_avg_c: number | null;
   relative_humidity_avg_pct: number | null;
+  /** Zone-averaged VPD (per-zone VPD computed first, then averaged) — see climateAveraging.ts's computeVarietyHourlyRow. Never recompute VPD from air_temperature_avg_c/relative_humidity_avg_pct here; those are already cross-zone averages and VPD is nonlinear in temperature. */
+  vpd_avg_kpa?: number | null;
   co2_avg_ppm: number | null;
   ec_avg: number | null;
   ph_avg: number | null;
@@ -105,12 +107,16 @@ export interface VarietyClimateHourlyRowLike {
   radiation_interval_delta_j_cm2: number | null;
 }
 
+export type VpdSource = 'per_zone_averaged' | 'legacy_averaged_temp_rh';
+
 export interface HourlyClimateFeatures {
   varietyId: string;
   measuredAt: string;
   degreeHours: number | null;
   vpdKpa: number | null;
   vpdBand: VpdBandKey | null;
+  /** 'per_zone_averaged': vpdKpa came from row.vpd_avg_kpa (correct — computed per zone, then averaged). 'legacy_averaged_temp_rh': that column was absent (a row from before this fix, not yet reconciled by a backfill), so vpdKpa was recomputed here from already-cross-zone-averaged temp/RH — a biased approximation, kept only for backward compatibility with unreconciled historical rows. */
+  vpdSource: VpdSource;
   isDaylight: boolean;
   ecDelta: number | null;
   phDelta: number | null;
@@ -138,7 +144,14 @@ export function computeHourlyFeatures(
   row: VarietyClimateHourlyRowLike,
   previousRow: VarietyClimateHourlyRowLike | null
 ): HourlyClimateFeatures {
-  const vpdKpa = computeVpdKpa(row.air_temperature_avg_c, row.relative_humidity_avg_pct);
+  // Prefer the pre-aggregated per-zone-averaged VPD. Only fall back to
+  // recomputing from cross-zone-averaged temp/RH when vpd_avg_kpa is
+  // genuinely absent (a row from before this fix that a backfill hasn't
+  // reconciled yet) — an approximation, not the corrected math, and labeled
+  // as such via vpdSource so a query can tell old rows from new ones.
+  const hasPerZoneVpd = row.vpd_avg_kpa !== undefined;
+  const vpdKpa = hasPerZoneVpd ? (row.vpd_avg_kpa ?? null) : computeVpdKpa(row.air_temperature_avg_c, row.relative_humidity_avg_pct);
+  const vpdSource: VpdSource = hasPerZoneVpd ? 'per_zone_averaged' : 'legacy_averaged_temp_rh';
   const adjacentHour =
     previousRow != null &&
     new Date(row.measured_at).getTime() - new Date(previousRow.measured_at).getTime() === 3600000;
@@ -148,6 +161,7 @@ export function computeHourlyFeatures(
     measuredAt: row.measured_at,
     degreeHours: computeDegreeHours(row.air_temperature_avg_c),
     vpdKpa,
+    vpdSource,
     vpdBand: classifyVpdBand(vpdKpa),
     isDaylight: isDaylightHour(row.radiation_interval_delta_j_cm2),
     ecDelta: adjacentHour && row.ec_avg != null && previousRow!.ec_avg != null ? round(row.ec_avg - previousRow!.ec_avg, 4) : null,
@@ -177,6 +191,8 @@ export interface ExposureHourlyInput {
   ecAvg: number | null;
   phAvg: number | null;
   features: HourlyClimateFeatures;
+  /** From variety_climate_hourly.temporal_covered — true iff at least one linked zone reported anything this hour. The authoritative signal for coveragePct below; optional only so older callers that haven't threaded it through yet fall back to the metric-presence heuristic rather than failing to compile. */
+  temporalCovered?: boolean;
 }
 
 export interface ExposureWindowFeatures {
@@ -304,8 +320,13 @@ export function aggregateExposureWindow(rows: ExposureHourlyInput[], hoursExpect
   const ecStats = stats(ecValues);
   const phStats = stats(phValues);
 
+  // temporalCovered (from variety_climate_hourly, threaded through by the
+  // caller) is authoritative: an hour is covered iff at least one linked
+  // zone reported ANYTHING, never reduced just because fewer than all linked
+  // zones reported. Falls back to the metric-presence heuristic only for a
+  // row that predates temporalCovered being threaded through.
   const hoursObserved = rows.filter(
-    (r) => r.ecAvg != null || r.phAvg != null || r.features.co2AvgPpm != null || r.features.degreeHours != null
+    (r) => r.temporalCovered ?? (r.ecAvg != null || r.phAvg != null || r.features.co2AvgPpm != null || r.features.degreeHours != null)
   ).length;
 
   return {

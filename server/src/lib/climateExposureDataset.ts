@@ -5,7 +5,7 @@
 // aggregation of already-computed deterministic features — no ML, and not
 // consumed by any predictive model yet.
 import { supabase } from './supabase';
-import { fetchAllRows } from './fetchAllRows';
+import { fetchAllRows } from './paginatedFetch';
 import { zonedTimeToUtc, GREENHOUSE_TIME_ZONE } from './ridderParser';
 import {
   aggregateExposureWindow,
@@ -14,6 +14,7 @@ import {
   type ExposureWindowFeatures,
   type HourlyClimateFeatures,
   type VpdBandKey,
+  type VpdSource,
 } from './climateFeatures';
 
 interface FruitInstanceRow {
@@ -37,6 +38,7 @@ interface HourlyRow {
   ec_avg: number | null;
   ph_avg: number | null;
   air_temperature_avg_c: number | null;
+  temporal_covered: boolean;
 }
 
 interface FeatureRow {
@@ -44,6 +46,7 @@ interface FeatureRow {
   measured_at: string;
   degree_hours: number | null;
   vpd_kpa: number | null;
+  vpd_source: VpdSource;
   vpd_band: VpdBandKey | null;
   is_daylight: boolean;
   ec_delta: number | null;
@@ -163,6 +166,7 @@ class VarietyClimateSeries {
           measuredAt: f.measured_at,
           degreeHours: f.degree_hours,
           vpdKpa: f.vpd_kpa,
+          vpdSource: f.vpd_source,
           vpdBand: f.vpd_band,
           isDaylight: f.is_daylight,
           ecDelta: f.ec_delta,
@@ -177,7 +181,8 @@ class VarietyClimateSeries {
           vpdBandConfigVersion: f.vpd_band_config_version,
           featureEngineVersion: f.feature_engine_version,
         };
-        return { measuredAt: h.measured_at, ecAvg: h.ec_avg, phAvg: h.ph_avg, features } satisfies ExposureHourlyInput;
+        const input: ExposureHourlyInput = { measuredAt: h.measured_at, ecAvg: h.ec_avg, phAvg: h.ph_avg, features, temporalCovered: h.temporal_covered };
+        return input;
       })
       .filter((v): v is ExposureHourlyInput => v != null)
       .sort((a, b) => (a.measuredAt < b.measuredAt ? -1 : 1));
@@ -250,7 +255,7 @@ export interface VarietyClimateDataset {
  * slices it per lifecycle window to avoid N+1 queries.
  */
 export async function buildVarietyClimateDataset(varietyId: string, setYear: number): Promise<VarietyClimateDataset> {
-  const instances = await fetchAllRows<FruitInstanceRow>((from, to) =>
+  const instances = await fetchAllRows<FruitInstanceRow>(() =>
     supabase
       .from('fruit_instances')
       .select(
@@ -258,7 +263,6 @@ export async function buildVarietyClimateDataset(varietyId: string, setYear: num
       )
       .eq('variety_id', varietyId)
       .eq('set_year', setYear)
-      .range(from, to)
   );
 
   if (instances.length === 0) return { instanceRows: [], cohortRows: [] };
@@ -271,11 +275,11 @@ export async function buildVarietyClimateDataset(varietyId: string, setYear: num
   const spanEnd = allBounds.length > 0 ? allBounds.map((w) => w.endIso).sort().slice(-1)[0] : nowIso;
 
   const [hourlyRows, featureRows] = await Promise.all([
-    fetchAllRows<HourlyRow>((from, to) =>
-      supabase.from('variety_climate_hourly').select('measured_at, ec_avg, ph_avg, air_temperature_avg_c').eq('variety_id', varietyId).gte('measured_at', spanStart).lt('measured_at', spanEnd).range(from, to)
+    fetchAllRows<HourlyRow>(() =>
+      supabase.from('variety_climate_hourly').select('measured_at, ec_avg, ph_avg, air_temperature_avg_c, temporal_covered').eq('variety_id', varietyId).gte('measured_at', spanStart).lt('measured_at', spanEnd)
     ),
-    fetchAllRows<FeatureRow>((from, to) =>
-      supabase.from('variety_climate_hourly_features').select('*').eq('variety_id', varietyId).gte('measured_at', spanStart).lt('measured_at', spanEnd).range(from, to)
+    fetchAllRows<FeatureRow>(() =>
+      supabase.from('variety_climate_hourly_features').select('*').eq('variety_id', varietyId).gte('measured_at', spanStart).lt('measured_at', spanEnd)
     ),
   ]);
 

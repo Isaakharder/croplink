@@ -3,10 +3,24 @@ import { supabase } from '../lib/supabase';
 import { GREENHOUSE_TIME_ZONE } from '../lib/ridderParser';
 import { localCalendarDateKey } from '../lib/climateAveraging';
 import { sumAccumulatedRadiationJCm2 } from '../lib/climateFeatures';
+import { fetchAllRows } from '../lib/paginatedFetch';
 
 const router = Router();
 
 type Granularity = 'hourly' | 'daily' | 'weekly';
+
+interface HourlyClimateRow {
+  measured_at: string;
+  air_temperature_avg_c: number | null;
+  relative_humidity_avg_pct: number | null;
+  co2_avg_ppm: number | null;
+  ec_avg: number | null;
+  ph_avg: number | null;
+  irrigation_interval_delta_ml: number | null;
+  irrigation_cumulative_avg_ml: number | null;
+  radiation_interval_delta_j_cm2: number | null;
+  radiation_cumulative_j_cm2: number | null;
+}
 
 function isoWeekKey(utcDate: Date, timeZone: string): string {
   // Uses the greenhouse-local calendar date to bucket into ISO weeks, so a
@@ -40,17 +54,23 @@ router.get('/', async (req: Request, res: Response, next: NextFunction) => {
     const granularity = (req.query.granularity as Granularity) || 'hourly';
     if (!varietyId) return res.status(400).json({ error: 'varietyId is required' });
 
-    let query = supabase
-      .from('variety_climate_hourly')
-      .select('*')
-      .eq('variety_id', varietyId as string)
-      .order('measured_at', { ascending: true });
-    if (start) query = query.gte('measured_at', start as string);
-    if (end) query = query.lte('measured_at', end as string);
-
-    const { data, error } = await query;
-    if (error) throw new Error(error.message);
-    const rows = data ?? [];
+    // Paginated (was unbounded): a full-season, unfiltered request for one
+    // variety can exceed 1,000 hourly rows well before the season ends
+    // (24/day × even a few weeks). Truncation here is a worse failure mode
+    // than most — it silently drops the LATEST hours (default order was
+    // ascending measured_at with no .range()), making a chart look like it
+    // just stops partway through with no error. Paginated by `id` (the
+    // helper's default, guaranteed unique) rather than `measured_at`
+    // directly, then explicitly re-sorted by measured_at afterward — same
+    // deterministic-tiebreaker approach requirement #2 asks for, without
+    // assuming measured_at itself is collision-free.
+    const rowsUnsorted = await fetchAllRows<HourlyClimateRow>(() => {
+      let q = supabase.from('variety_climate_hourly').select('*').eq('variety_id', varietyId as string);
+      if (start) q = q.gte('measured_at', start as string);
+      if (end) q = q.lte('measured_at', end as string);
+      return q;
+    });
+    const rows = rowsUnsorted.sort((a, b) => (a.measured_at < b.measured_at ? -1 : a.measured_at > b.measured_at ? 1 : 0));
 
     if (granularity === 'hourly') {
       return res.json({ granularity, rows });

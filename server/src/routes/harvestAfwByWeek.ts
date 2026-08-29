@@ -3,6 +3,30 @@ import { supabase } from '../lib/supabase';
 
 const router = Router();
 
+// Same ISO-week calculation ripeningActuals.ts and breakerLearning.ts each
+// already carry their own copy of — kept local here too rather than
+// centralized, matching that existing per-file convention.
+function getIsoWeek(d: Date): number {
+  const date = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
+  const day = date.getUTCDay() || 7;
+  date.setUTCDate(date.getUTCDate() + 4 - day);
+  const yearStart = new Date(Date.UTC(date.getUTCFullYear(), 0, 1));
+  return Math.ceil((((date.getTime() - yearStart.getTime()) / 86400000) + 1) / 7);
+}
+
+/**
+ * True when (year, week) is strictly after today's ISO year/week — i.e. a
+ * week that hasn't happened yet, so it cannot have a real harvest
+ * measurement. Compares as a single absolute-week number (year*52+week),
+ * the same 52-week-per-year convention used elsewhere (breakerLearning,
+ * harvestProjections, ripeningActuals) for cross-year comparisons.
+ */
+function isFutureWeek(year: number, week: number): boolean {
+  const today = new Date();
+  const todayAbsWeek = today.getFullYear() * 52 + getIsoWeek(today);
+  return year * 52 + week > todayAbsWeek;
+}
+
 router.get('/', async (req: Request, res: Response, next: NextFunction) => {
   try {
     const { varietyId, year } = req.query;
@@ -50,6 +74,17 @@ router.post('/upsert-many', async (req: Request, res: Response, next: NextFuncti
 
     const skipped: { week_number: number; reason: string }[] = [];
     const rowsToUpsert = rows.filter((r) => {
+      // A real harvest measurement cannot exist for a week that hasn't
+      // happened yet — reject outright rather than silently downgrading to
+      // 'override', so a future-dated guess never gets stored with the
+      // confidence of a real measurement (see the 2026-08-28 projection
+      // audit: this is exactly how a season's AFW got batch-guessed on a
+      // single day). The grower can still save it deliberately as an
+      // override.
+      if (r.source === 'actual' && isFutureWeek(r.year, r.week_number)) {
+        skipped.push({ week_number: r.week_number, reason: `Week ${r.week_number} hasn't happened yet — can't save as an actual. Use Override instead.` });
+        return false;
+      }
       if (r.source !== 'override') return true;
       const key = `${r.variety_id}:${r.year}:${r.week_number}`;
       if (existingActualKeys.has(key)) {

@@ -372,8 +372,11 @@ export function CalculatorPage() {
       ]);
 
       if (afwResult.skipped.length > 0) {
-        const weeks = afwResult.skipped.map(s => `W${s.week_number}`).join(', ');
-        setSaveMsg(`Saved. Override not saved for ${weeks} — an actual already exists for that week.`);
+        // Each skipped row carries its own reason now (override-vs-existing-
+        // actual conflict, or a future-dated actual rejected outright) —
+        // show that reason rather than assuming it's always the conflict case.
+        const detail = afwResult.skipped.map(s => `W${s.week_number}: ${s.reason}`).join('; ');
+        setSaveMsg(`Saved. ${detail}`);
       } else {
         setSaveMsg('Saved successfully!');
       }

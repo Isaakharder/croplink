@@ -6,9 +6,20 @@ const router = Router();
 router.get('/', async (req: Request, res: Response, next: NextFunction) => {
   try {
     const { stemId } = req.query;
-    let query = supabase.from('plant_nodes').select('*').order('sort_order').order('node_number');
-    if (stemId) query = query.eq('measurement_stem_id', stemId as string);
-    const { data, error } = await query;
+    // stemId is required: an unfiltered plant_nodes scan is unbounded (a
+    // single variety can have 2,000+ nodes — confirmed live) and no client
+    // in this codebase ever omits it (nodesApi.list(stemId: string) always
+    // passes one). Rejecting rather than silently paginating a query
+    // nothing legitimately needs to run unbounded.
+    if (!stemId) {
+      return res.status(400).json({ error: 'stemId is required' });
+    }
+    const { data, error } = await supabase
+      .from('plant_nodes')
+      .select('*')
+      .eq('measurement_stem_id', stemId as string)
+      .order('sort_order')
+      .order('node_number');
     if (error) throw new Error(error.message);
     res.json(data);
   } catch (e) {

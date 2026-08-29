@@ -60,6 +60,7 @@ console.log('\naggregateExposureWindow radiation accumulation');
       measuredAt,
       degreeHours: 0,
       vpdKpa: null,
+      vpdSource: 'per_zone_averaged',
       vpdBand: null,
       isDaylight: radiationIntervalDeltaJCm2 != null && radiationIntervalDeltaJCm2 > 0,
       ecDelta: null,

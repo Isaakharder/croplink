@@ -1,9 +1,9 @@
 import { Router, Request, Response, NextFunction } from 'express';
 import { supabase } from '../lib/supabase';
-import { fetchAllRows } from '../lib/fetchAllRows';
+import { fetchAllRows as fetchAllRowsOrdered } from '../lib/paginatedFetch';
 import { GREENHOUSE_TIME_ZONE } from '../lib/ridderParser';
 import { localCalendarDateKey } from '../lib/climateAveraging';
-import { aggregateExposureWindow, wholeHoursBetween, type ExposureHourlyInput, type HourlyClimateFeatures, type VpdBandKey } from '../lib/climateFeatures';
+import { aggregateExposureWindow, wholeHoursBetween, type ExposureHourlyInput, type HourlyClimateFeatures, type VpdBandKey, type VpdSource } from '../lib/climateFeatures';
 import { recomputeVarietyClimateFeatures } from '../lib/climateFeatureRecompute';
 
 const router = Router();
@@ -32,6 +32,7 @@ interface FeatureRow {
   measured_at: string;
   degree_hours: number | null;
   vpd_kpa: number | null;
+  vpd_source: VpdSource;
   vpd_band: VpdBandKey | null;
   is_daylight: boolean;
   ec_delta: number | null;
@@ -52,6 +53,7 @@ interface HourlyRow {
   ph_avg: number | null;
   air_temperature_avg_c: number | null;
   relative_humidity_avg_pct: number | null;
+  temporal_covered: boolean;
 }
 
 function toExposureInput(h: HourlyRow, f: FeatureRow): ExposureHourlyInput {
@@ -60,6 +62,7 @@ function toExposureInput(h: HourlyRow, f: FeatureRow): ExposureHourlyInput {
     measuredAt: f.measured_at,
     degreeHours: f.degree_hours,
     vpdKpa: f.vpd_kpa,
+    vpdSource: f.vpd_source,
     vpdBand: f.vpd_band,
     isDaylight: f.is_daylight,
     ecDelta: f.ec_delta,
@@ -74,7 +77,7 @@ function toExposureInput(h: HourlyRow, f: FeatureRow): ExposureHourlyInput {
     vpdBandConfigVersion: f.vpd_band_config_version,
     featureEngineVersion: f.feature_engine_version,
   };
-  return { measuredAt: h.measured_at, ecAvg: h.ec_avg, phAvg: h.ph_avg, features };
+  return { measuredAt: h.measured_at, ecAvg: h.ec_avg, phAvg: h.ph_avg, features, temporalCovered: h.temporal_covered };
 }
 
 // GET /?varietyId=&start=&end=&granularity=hourly|daily|weekly
@@ -84,17 +87,19 @@ router.get('/', async (req: Request, res: Response, next: NextFunction) => {
     const granularity = (req.query.granularity as Granularity) || 'hourly';
     if (!varietyId) return res.status(400).json({ error: 'varietyId is required' });
 
-    let query = supabase
-      .from('variety_climate_hourly_features')
-      .select('*')
-      .eq('variety_id', varietyId as string)
-      .order('measured_at', { ascending: true });
-    if (start) query = query.gte('measured_at', start as string);
-    if (end) query = query.lte('measured_at', end as string);
-
-    const { data, error } = await query;
-    if (error) throw new Error(error.message);
-    const rows = (data ?? []) as FeatureRow[];
+    // Paginated (was unbounded, matching the identical defect just fixed in
+    // varietyClimateHourly.ts's primary path — that file's sibling
+    // endpoints already used the OLDER, unordered lib/fetchAllRows below;
+    // this one primary path had no pagination at all). Ordered by `id` via
+    // the newer helper, then explicitly re-sorted by measured_at — same
+    // deterministic-tiebreaker approach as varietyClimateHourly.ts.
+    const rowsUnsorted = await fetchAllRowsOrdered<FeatureRow>(() => {
+      let q = supabase.from('variety_climate_hourly_features').select('*').eq('variety_id', varietyId as string);
+      if (start) q = q.gte('measured_at', start as string);
+      if (end) q = q.lte('measured_at', end as string);
+      return q;
+    });
+    const rows = rowsUnsorted.sort((a, b) => (a.measured_at < b.measured_at ? -1 : a.measured_at > b.measured_at ? 1 : 0));
 
     if (granularity === 'hourly') {
       return res.json({ granularity, rows });
@@ -106,15 +111,14 @@ router.get('/', async (req: Request, res: Response, next: NextFunction) => {
     // exact same aggregator /exposure uses — rather than hand-rolling a
     // second, narrower rollup. Needs the raw variety_climate_hourly rows too
     // (EC/pH/temp/RH aren't stored on the features table).
-    const hourlyRows = await fetchAllRows<HourlyRow>((from, to) => {
+    const hourlyRows = await fetchAllRowsOrdered<HourlyRow>(() => {
       let q = supabase
         .from('variety_climate_hourly')
-        .select('measured_at, ec_avg, ph_avg, air_temperature_avg_c, relative_humidity_avg_pct')
-        .eq('variety_id', varietyId as string)
-        .order('measured_at', { ascending: true });
+        .select('measured_at, ec_avg, ph_avg, air_temperature_avg_c, relative_humidity_avg_pct, temporal_covered')
+        .eq('variety_id', varietyId as string);
       if (start) q = q.gte('measured_at', start as string);
       if (end) q = q.lte('measured_at', end as string);
-      return q.range(from, to);
+      return q;
     });
     const hourlyByTs = new Map(hourlyRows.map((h) => [h.measured_at, h]));
 
@@ -163,23 +167,21 @@ router.get('/exposure', async (req: Request, res: Response, next: NextFunction) 
     if (!varietyId || !start || !end) return res.status(400).json({ error: 'varietyId, start, and end are required' });
 
     const [hourlyRows, featureRows] = await Promise.all([
-      fetchAllRows<HourlyRow>((from, to) =>
+      fetchAllRowsOrdered<HourlyRow>(() =>
         supabase
           .from('variety_climate_hourly')
-          .select('measured_at, ec_avg, ph_avg, air_temperature_avg_c, relative_humidity_avg_pct')
+          .select('measured_at, ec_avg, ph_avg, air_temperature_avg_c, relative_humidity_avg_pct, temporal_covered')
           .eq('variety_id', varietyId as string)
           .gte('measured_at', start as string)
           .lt('measured_at', end as string)
-          .range(from, to)
       ),
-      fetchAllRows<FeatureRow>((from, to) =>
+      fetchAllRowsOrdered<FeatureRow>(() =>
         supabase
           .from('variety_climate_hourly_features')
           .select('*')
           .eq('variety_id', varietyId as string)
           .gte('measured_at', start as string)
           .lt('measured_at', end as string)
-          .range(from, to)
       ),
     ]);
 
@@ -207,14 +209,13 @@ router.post('/recompute', async (req: Request, res: Response, next: NextFunction
     const { varietyId, start, end } = req.body ?? {};
     if (!varietyId || !start || !end) return res.status(400).json({ error: 'varietyId, start, and end are required' });
 
-    const rows = await fetchAllRows<{ measured_at: string }>((from, to) =>
+    const rows = await fetchAllRowsOrdered<{ measured_at: string }>(() =>
       supabase
         .from('variety_climate_hourly')
         .select('measured_at')
         .eq('variety_id', varietyId)
         .gte('measured_at', start)
         .lte('measured_at', end)
-        .range(from, to)
     );
 
     await recomputeVarietyClimateFeatures(rows.map((r) => ({ varietyId, measuredAt: r.measured_at })));
