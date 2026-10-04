@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Season, Variety, ForecastLabView, ForecastLabMetrics, ForecastLabModelId, ForecastLabCell, ForecastLabStat } from '../types';
 import { yearsApi, varietiesApi, forecastLabApi } from '../services/api';
 import { defaultYear, yearNumbers } from '../utils/years';
+import { SOURCE_SHORT } from '../utils/afwForecastDraft';
 
 const EXPERIMENTAL: ForecastLabModelId[] = ['open-fruit-d', 'interval-censored-recent'];
 const SHORT: Record<ForecastLabModelId, string> = { legacy: 'Legacy', 'open-fruit-d': 'Open-fruit D', 'interval-censored-recent': 'Interval-censored (recent)' };
@@ -21,6 +22,7 @@ function Cell({ c }: { c: ForecastLabCell | undefined }) {
     `${c.version} · as of ${c.asOfWeek}${c.issuedAt ? ` · issued ${c.issuedAt.slice(0, 16).replace('T', ' ')} UTC` : ''}`,
     c.kind === 'hindcast' ? 'Hindcast: reconstructed from data known at that week, issued later' : c.kind === 'current' ? 'Not locked yet — computed now' : 'Locked live forecast',
     c.afwG != null ? `AFW ${c.afwG.toFixed(1)} g (${c.afwSource}, ${c.afwWeek})` : 'No AFW',
+    ...(c.lockedKg != null ? [`Locked before an input change: ${kg(c.lockedKg)} kg (this locked value is the one scored)`] : []),
     ...c.warnings,
   ].join('\n');
   return (
@@ -32,6 +34,12 @@ function Cell({ c }: { c: ForecastLabCell | undefined }) {
         {c.harvestWindow < 1 ? ` · pull-out ${Math.round(c.harvestWindow * 7)}/7` : ''}
         {c.warnings.some((w) => /fallback|stale|thin|insufficient|partial-coverage/.test(w)) ? ' · ⚠' : ''}
       </div>
+      {c.afwG != null && (
+        <div style={{ fontSize: 10, color: c.afwSource?.startsWith('manual') ? 'var(--blue-500)' : 'var(--gray-400)' }}>
+          AFW {c.afwG.toFixed(0)} g · {SOURCE_SHORT[c.afwSource as keyof typeof SOURCE_SHORT] ?? c.afwSource}
+        </div>
+      )}
+      {c.lockedKg != null && <div style={{ fontSize: 10, color: 'var(--gray-500)' }}>locked: {kg(c.lockedKg)}</div>}
     </td>
   );
 }

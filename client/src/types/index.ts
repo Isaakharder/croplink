@@ -857,6 +857,9 @@ export interface ForecastLabCell {
   warnings: string[];
   diffKg: number | null;
   diffPct: number | null;
+  /** Set when a locked live snapshot differs from this (current) computation — the locked value is the one scored. */
+  lockedKg?: number | null;
+  lockedIssuedAt?: string | null;
 }
 
 export interface ForecastLabWeek {
@@ -904,6 +907,7 @@ export interface ForecastLabView {
     afw: { grams: number; source: string; week: string; ageWeeks: number } | null;
     snapshotsEnabled: boolean;
     growlinkV2Available: boolean;
+    afwForecastsAvailable?: boolean;
   };
   configHistory: { field: string; old_value: unknown; new_value: unknown; effective_from: string; changed_at: string; source: string; note: string | null }[];
   warnings: string[];
@@ -932,3 +936,35 @@ export interface ForecastLabMetrics {
   criteria: Record<string, unknown>;
   reports: { kind: 'live' | 'hindcast'; scored: number; models: ForecastLabModelReport[]; exclusions: { reason: string; count: number }[] }[];
 }
+
+// ── Grower AFW forecasts ────────────────────────────────────────────────────
+
+export type AfwUsedSource = 'manual-exact' | 'manual-carried' | 'growlink-settled' | 'growlink-v2' | 'croplink-manual';
+
+export interface AfwForecastWeek {
+  index: number;
+  year: number;
+  week: number;
+  label: string;
+  current: boolean;
+  harvestWindow: number;
+  manual: { grams: number; enteredAt: string; entryId: number } | null;
+  growlinkActual: { grams: number; settled: boolean } | null;
+  used: { grams: number; source: AfwUsedSource; sourceLabel: string; fromWeek: string } | null;
+}
+
+export interface AfwForecastEditorModel {
+  available: true;
+  variety: { id: string; name: string; pullOutDate: string | null };
+  window: { from: string; to: string; pullOutKnown: boolean };
+  latestEntryId: number;
+  /** AFW a week uses when no manual forecast reaches it (settled GrowLink, else the existing fallback). */
+  baseline: { grams: number; source: AfwUsedSource; sourceLabel: string; fromWeek: string } | null;
+  weeks: AfwForecastWeek[];
+  history: { id: number; week: string; action: 'set' | 'clear'; grams: number | null; enteredAt: string }[];
+  warnings: string[];
+  saved?: number;
+  notices?: string[];
+}
+
+export interface AfwForecastChange { year: number; week: number; grams: number | null }

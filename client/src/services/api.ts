@@ -578,6 +578,21 @@ export const projectionApi = {
 
 // Forecast Lab — experimental forecasts beside the legacy forecast.
 const FORECAST_LAB_BASE = apiUrl('/api/forecast-lab');
+const AFW_FORECASTS_BASE = apiUrl('/api/afw-forecasts');
+export const afwForecastsApi = {
+  get: (varietyId: string) =>
+    requestFrom<import('../types').AfwForecastEditorModel>(AFW_FORECASTS_BASE, `?varietyId=${encodeURIComponent(varietyId)}`),
+  /** Unlike other calls, returns per-week validation errors (422) and conflicts (409) instead of throwing. */
+  save: async (varietyId: string, expectedLatestEntryId: number, changes: import('../types').AfwForecastChange[]): Promise<
+    { ok: true; model: import('../types').AfwForecastEditorModel } | { ok: false; status: number; error: string; errors: { year: unknown; week: unknown; reason: string }[] }
+  > => {
+    const res = await fetch(AFW_FORECASTS_BASE, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ varietyId, expectedLatestEntryId, changes }) });
+    const body = await res.json().catch(() => ({}));
+    if (res.ok) return { ok: true, model: body };
+    return { ok: false, status: res.status, error: body.error ?? `Request failed: ${res.status}`, errors: Array.isArray(body.errors) ? body.errors : [] };
+  },
+};
+
 export const forecastLabApi = {
   view: (year: number, varietyId: string, horizon: number) =>
     requestFrom<import('../types').ForecastLabView>(FORECAST_LAB_BASE, `/view?year=${year}&varietyId=${encodeURIComponent(varietyId)}&horizon=${horizon}`),

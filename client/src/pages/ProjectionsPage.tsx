@@ -3,6 +3,7 @@ import { Season, Variety, HarvestProjectionsResult, BreakerLearningResult, Varie
 import { yearsApi, varietiesApi, harvestProjectionsApi, breakerLearningApi, varietyClimateFeaturesApi, climateFeatureConfigApi, growlinkHarvestActualsApi } from '../services/api';
 import { defaultYear, uniqueYears } from '../utils/years';
 import { ProjectionsClimateContext } from '../components/ProjectionsClimateContext';
+import { AfwForecastEditor } from '../components/AfwForecastEditor';
 import { buildWeeklyComparison, formatDifferenceLabel, type WeeklyComparisonRow } from '../utils/growlinkComparison';
 
 export function ProjectionsPage() {
@@ -16,6 +17,8 @@ export function ProjectionsPage() {
   const [breakerData, setBreakerData] = useState<BreakerLearningResult | null>(null);
   const [caseKgInput, setCaseKgInput] = useState<string>('');
   const [showBreakerDetails, setShowBreakerDetails] = useState(false);
+  const [afwDirty, setAfwDirty] = useState(false);
+  const confirmLeaveAfw = () => !afwDirty || window.confirm('You have unsaved AFW forecast changes. Discard them?');
 
   useEffect(() => {
     yearsApi.list().then((s) => {
@@ -259,7 +262,7 @@ export function ProjectionsPage() {
           className="form-control"
           style={{ width: 180 }}
           value={selectedYear}
-          onChange={(e) => setSelectedYear(Number(e.target.value))}
+          onChange={(e) => { if (confirmLeaveAfw()) setSelectedYear(Number(e.target.value)); }}
         >
           {years.map((s) => (
             <option key={s.id} value={s.year}>{s.year}</option>
@@ -270,7 +273,7 @@ export function ProjectionsPage() {
           className="form-control"
           style={{ width: 160 }}
           value={selectedVarietyId}
-          onChange={(e) => setSelectedVarietyId(e.target.value)}
+          onChange={(e) => { if (confirmLeaveAfw()) setSelectedVarietyId(e.target.value); }}
         >
           <option value="">All Varieties</option>
           {varieties.map((v) => (
@@ -295,6 +298,12 @@ export function ProjectionsPage() {
           }}
         />
       </div>
+
+      {selectedVarietyId ? (
+        <AfwForecastEditor key={`${selectedYear}:${selectedVarietyId}`} varietyId={selectedVarietyId} year={selectedYear} onDirtyChange={setAfwDirty} />
+      ) : (
+        <div className="empty-hint" style={{ margin: '0 0 12px' }}>Select a variety to enter AFW forecasts for the current and coming weeks.</div>
+      )}
 
       {loading && <div className="loading-state">Loading projections…</div>}
       {error && <div className="error-banner">{error}</div>}

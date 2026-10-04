@@ -388,6 +388,11 @@ table tr.report-group__header-row:hover td {
   color: var(--yellow-500);
 }
 
+.badge-blue {
+  background: var(--blue-100);
+  color: var(--blue-500);
+}
+
 /* Grid helpers */
 .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
 .grid-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 16px; }
