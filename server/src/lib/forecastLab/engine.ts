@@ -5,8 +5,12 @@
 // Rules this module enforces:
 //  - Only data known at the forecast cutoff is used (statuses for weeks <= asOf
 //    entered by the forecast date; AFW rows known by then).
-//  - AFW comes from GrowLink v2 packed data when available, otherwise CropLink's
-//    manual AFW — flagged as a fallback, and flagged stale when old.
+//  - AFW is resolved PER TARGET WEEK (lib/afwForecast.ts): grower-entered AFW
+//    forecast for that week → most recent earlier AFW forecast → latest
+//    settled GrowLink AFW → the existing fallback (latest GrowLink AFW, else
+//    CropLink's manual AFW — flagged as a fallback, and flagged stale when
+//    old). AFW forecasts count only if entered by the forecast's knowledge
+//    time, and a week never uses a forecast for a later week.
 //  - Breaker/MatureGreen statuses never add fruit (lifecycle replay counts set
 //    fruit once).
 //  - Missed harvest surveys are interval-censored (IC model); recent unfinished
@@ -23,6 +27,7 @@ import {
 } from '../intervalSurvival';
 import { harvestWindowFraction } from '../cropWindow';
 import { IsoWeek, isoWeekIndex, fromIsoWeekIndex, isoWeekOfDate } from '../isoWeek';
+import { ManualAfwEntry, TargetAfw, TargetAfwSource, effectiveManualAfw, latestSettledGrowlinkAfw, resolveTargetAfw } from '../afwForecast';
 
 export const LAB_HORIZON = 8;
 export const BOOTSTRAP_DRAWS = 40;
@@ -67,6 +72,8 @@ export interface LabInputs {
   manualFruitSetPerM2: Map<number, number>;
   /** Current legacy endpoint output by harvest-week index. */
   legacyByIndex: Map<number, { kg: number; fruitPerM2: number }>;
+  /** Every grower-entered AFW forecast row for the variety (append-only history). */
+  manualAfw?: ManualAfwEntry[];
 }
 
 export interface LabTarget {
@@ -80,6 +87,8 @@ export interface LabTarget {
   fruitPerM2: number | null;
   harvestWindow: number;
   coverage: number | null;
+  /** AFW used for this week's kg (null for legacy, or when none is known). */
+  afw: TargetAfw | null;
   warnings: string[];
 }
 
@@ -90,7 +99,8 @@ export interface LabForecast {
   asOf: IsoWeek;
   asOfIndex: number;
   inputCutoff: string;
-  afw: { grams: number; source: AfwPoint['source']; asOfIndex: number; ageWeeks: number } | null;
+  /** AFW of the first target week (each target carries its own in `targets[].afw`). */
+  afw: { grams: number; source: TargetAfwSource; asOfIndex: number; ageWeeks: number } | null;
   areaM2: number;
   totalStems: number;
   measuredStems: number;
@@ -154,6 +164,9 @@ interface Context {
   asOfIndex: number;
   cutoff: ReturnType<typeof forecastCutoff>;
   afw: ReturnType<typeof selectAfw>;
+  targetAfw: Map<number, TargetAfw | null>;
+  afwWarnings: string[];
+  manualAfwKnownBy: Date;
   measuredStems: number;
   baseWarnings: string[];
 }
@@ -162,17 +175,32 @@ function targetsShell(ctx: Context): LabTarget[] {
   return Array.from({ length: LAB_HORIZON }, (_, k) => {
     const index = ctx.asOfIndex + k + 1;
     const w = fromIsoWeekIndex(index);
-    return { index, year: w.year, week: w.week, horizon: k + 1, kg: null, low: null, high: null, fruitPerM2: null, harvestWindow: harvestWindowFraction(index, ctx.inputs.variety.pullOutDate), coverage: null, warnings: [] };
+    return { index, year: w.year, week: w.week, horizon: k + 1, kg: null, low: null, high: null, fruitPerM2: null, harvestWindow: harvestWindowFraction(index, ctx.inputs.variety.pullOutDate), coverage: null, afw: null, warnings: [] };
   });
 }
 
 function base(ctx: Context, modelId: LabModelId): Omit<LabForecast, 'targets' | 'params' | 'evidence' | 'warnings'> {
   const m = LAB_MODELS[modelId];
+  const first = ctx.targetAfw.get(ctx.asOfIndex + 1) ?? null;
   return {
     modelId, version: m.version, experimental: m.experimental, asOf: ctx.asOf, asOfIndex: ctx.asOfIndex, inputCutoff: ctx.cutoff.enteredBy.toISOString(),
-    afw: ctx.afw.point ? { grams: ctx.afw.point.grams, source: ctx.afw.point.source, asOfIndex: ctx.afw.point.index, ageWeeks: ctx.asOfIndex - ctx.afw.point.index } : null,
+    afw: first ? { grams: first.grams, source: first.source, asOfIndex: first.fromIndex, ageWeeks: ctx.asOfIndex - first.fromIndex } : null,
     areaM2: ctx.inputs.variety.areaM2, totalStems: ctx.inputs.variety.totalStems, measuredStems: ctx.measuredStems, pullOutDate: ctx.inputs.variety.pullOutDate,
   };
+}
+
+/** Attach each target's resolved AFW and label carried-forward manual values. */
+function attachAfw(ctx: Context, targets: LabTarget[]) {
+  for (const t of targets) {
+    t.afw = ctx.targetAfw.get(t.index) ?? null;
+    if (t.afw?.source === 'manual-carried') t.warnings.push(`afw-carried: manual AFW forecast carried forward from W${fromIsoWeekIndex(t.afw.fromIndex).week}`);
+  }
+}
+
+const AFW_POLICY = 'afw-chain/1: manual forecast (exact week) > manual forecast (latest earlier week) > latest settled GrowLink AFW > existing fallback (latest GrowLink AFW, else CropLink manual AFW)';
+
+function afwParams(ctx: Context) {
+  return { afwPolicy: AFW_POLICY, manualAfwKnownBy: ctx.manualAfwKnownBy.toISOString() };
 }
 
 function finishTargets(targets: LabTarget[], draws: Map<number, number>[]) {
@@ -197,7 +225,7 @@ function legacyForecast(ctx: Context): LabForecast {
   return {
     ...base(ctx, 'legacy'),
     afw: null, // the legacy endpoint applies CropLink's own harvest_afw_by_week internally
-    params: { source: 'GET /harvest-projections (unchanged)', timing: 'stored harvest_timing_profiles (20/40/40 at +6/+7/+8)' },
+    params: { source: 'GET /harvest-projections (unchanged)', timing: 'stored harvest_timing_profiles (20/40/40 at +6/+7/+8)', afw: 'harvest_afw_by_week carry-forward inside the legacy endpoint — does not use AFW forecasts' },
     evidence: { note: 'Legacy forecast is not chronological: it reflects stored profiles as of issue time and does not apply pull-out truncation.' },
     warnings: [],
     targets,
@@ -208,7 +236,7 @@ function dInput(ctx: Context, events: StatusEvent[]): ForecastInput {
   const { inputs, asOf, cutoff } = ctx;
   return {
     asOf, lifecycles: replayFruitLifecycles(events, cutoff), coverage: summarizeWeeks(events, cutoff), manualFruitSetPerM2: inputs.manualFruitSetPerM2,
-    afw: ctx.afw.point ? [{ index: ctx.afw.point.index, grams: ctx.afw.point.grams }] : [],
+    afw: [...ctx.targetAfw].filter(([, a]) => a != null).map(([index, a]) => ({ index, grams: a!.grams })),
     totalStems: inputs.variety.totalStems, areaM2: inputs.variety.areaM2, pullOutDate: inputs.variety.pullOutDate,
   };
 }
@@ -222,9 +250,10 @@ function openFruitD(ctx: Context, draws: number, seed: number): LabForecast {
     t.fruitPerM2 = w.fruitPerM2;
     t.coverage = w.coverage;
   }
+  attachAfw(ctx, targets);
   const rand = mulberry32(seed);
   const boot: Map<number, number>[] = [];
-  if (ctx.afw.point) {
+  if (targets.some((t) => t.afw)) {
     for (let b = 0; b < draws; b++) {
       const r = forecastHarvest(dInput(ctx, resampleEventsByStem(ctx.inputs.events, rand)), 'D', LAB_HORIZON);
       boot.push(new Map(r.weeks.map((w) => [w.index, w.kg ?? 0])));
@@ -233,9 +262,9 @@ function openFruitD(ctx: Context, draws: number, seed: number): LabForecast {
   finishTargets(targets, boot);
   return {
     ...base(ctx, 'open-fruit-d'),
-    params: { timing: 'survey week (recorded) — not shifted to packing week', maturityWeeks: 10, minSample: 30, bootstrapDraws: draws, interval: 'p10–p90 stem bootstrap', seed },
+    params: { timing: 'survey week (recorded) — not shifted to packing week', maturityWeeks: 10, minSample: 30, bootstrapDraws: draws, interval: 'p10–p90 stem bootstrap', seed, ...afwParams(ctx) },
     evidence: res.evidence as unknown as Record<string, unknown>,
-    warnings: [...ctx.baseWarnings, ...ctx.afw.warnings, ...fallbackWarnings(res.evidence)],
+    warnings: [...ctx.baseWarnings, ...ctx.afwWarnings, ...fallbackWarnings(res.evidence)],
     targets,
   };
 }
@@ -254,8 +283,9 @@ function intervalCensoredRecent(ctx: Context, draws: number, seed: number): LabF
   const obs = buildFruitObservations(ctx.inputs.events, ctx.cutoff, checks);
   const main = icFruit(ctx, obs);
   const targets = targetsShell(ctx);
-  const warnings = [...ctx.baseWarnings, ...ctx.afw.warnings];
-  const grams = ctx.afw.point?.grams ?? null;
+  const warnings = [...ctx.baseWarnings, ...ctx.afwWarnings];
+  attachAfw(ctx, targets);
+  const gramsAt = (i: number) => ctx.targetAfw.get(i)?.grams ?? null;
   const area = ctx.inputs.variety.areaM2;
   const boot: Map<number, number>[] = [];
   let evidence: Record<string, unknown> = {};
@@ -266,15 +296,16 @@ function intervalCensoredRecent(ctx: Context, draws: number, seed: number): LabF
     const total = p.reduce((s, [, v]) => s + v, 0);
     for (const t of targets) {
       const f = main.fruit.get(t.index) ?? 0;
+      const g = gramsAt(t.index);
       t.fruitPerM2 = f;
-      t.kg = grams != null ? (f * area * grams) / 1000 : null;
+      t.kg = g != null ? (f * area * g) / 1000 : null;
       t.coverage = total > 0 ? p.filter(([a]) => a >= t.horizon).reduce((s, [, v]) => s + v, 0) / total : null;
     }
-    if (grams != null) {
+    if (targets.some((t) => t.afw)) {
       const rand = mulberry32(seed);
       for (let b = 0; b < draws; b++) {
         const r = icFruit(ctx, resampleStems(obs, rand), 60);
-        boot.push(new Map([...(r?.fruit ?? new Map<number, number>())].map(([i, f]) => [i, (f * area * grams) / 1000])));
+        boot.push(new Map([...(r?.fruit ?? new Map<number, number>())].map(([i, f]) => [i, (f * area * (gramsAt(i) ?? 0)) / 1000])));
       }
     }
     const unchecked: string[] = [];
@@ -287,7 +318,7 @@ function intervalCensoredRecent(ctx: Context, draws: number, seed: number): LabF
   finishTargets(targets, boot);
   return {
     ...base(ctx, 'interval-censored-recent'),
-    params: { timing: `biological week → GrowLink packing week, shift ${PACK_SHIFT.toFixed(4)} to previous week`, recentPeriodWeeks: RECENT_PERIOD_WEEKS, minSample: 30, bootstrapDraws: draws, interval: 'p10–p90 stem bootstrap', seed },
+    params: { timing: `biological week → GrowLink packing week, shift ${PACK_SHIFT.toFixed(4)} to previous week`, recentPeriodWeeks: RECENT_PERIOD_WEEKS, minSample: 30, bootstrapDraws: draws, interval: 'p10–p90 stem bootstrap', seed, ...afwParams(ctx) },
     evidence,
     warnings,
     targets,
@@ -298,6 +329,30 @@ export interface BuildOptions {
   now: Date;
   draws?: number;
   seed?: number;
+  /**
+   * Grower AFW forecasts entered after this moment are ignored. Defaults to the
+   * as-of week's data cutoff (no look-ahead — what hindcasts must use); live
+   * forecasts pass their issue time so a just-saved AFW forecast applies.
+   */
+  afwKnownBy?: Date;
+}
+
+/** Per-target AFW for targets asOf+1..asOf+horizon, plus the warnings that apply to the AFW actually used. */
+export function resolveLabAfw(inputs: LabInputs, asOfIndex: number, cutoffAt: Date, manualKnownBy: Date) {
+  const selected = selectAfw(inputs.afw, asOfIndex, cutoffAt);
+  const manual = effectiveManualAfw(inputs.manualAfw ?? [], manualKnownBy);
+  const settled = latestSettledGrowlinkAfw(inputs.afw.filter((p) => p.source === 'growlink-v2'), asOfIndex, cutoffAt);
+  const targetAfw = new Map<number, TargetAfw | null>();
+  for (let k = 1; k <= LAB_HORIZON; k++) targetAfw.set(asOfIndex + k, resolveTargetAfw(asOfIndex + k, manual, settled, selected.point));
+  const used = [...targetAfw.values()];
+  const warnings: string[] = [];
+  if (used.every((a) => a == null)) warnings.push('no-afw: no fruit weight known — kg cannot be computed');
+  else {
+    if (used.some((a) => a && (a.source === 'growlink-v2' || a.source === 'croplink-manual'))) warnings.push(...selected.warnings);
+    const manualN = used.filter((a) => a && (a.source === 'manual-exact' || a.source === 'manual-carried')).length;
+    if (manualN > 0) warnings.push(`afw-manual-forecast: ${manualN} of ${LAB_HORIZON} weeks use grower-entered AFW forecasts`);
+  }
+  return { selected, targetAfw, warnings };
 }
 
 /** Legacy + every experimental candidate for one variety, as of `asOf`. Deterministic for a given seed. */
@@ -311,8 +366,10 @@ export function buildLabForecasts(inputs: LabInputs, asOf: IsoWeek, opts: BuildO
   if (!isFinite(latestMeasured)) baseWarnings.push('no-measurements: no survey data before the cutoff');
   else if (latestMeasured < asOfIndex) baseWarnings.push(`measurements-stale: last survey W${fromIsoWeekIndex(latestMeasured).week}, forecast as of W${asOf.week}`);
   if (isoWeekIndex(nowWeek.year, nowWeek.week) - asOfIndex > 1) baseWarnings.push(`forecast-old: as of W${asOf.week}, now W${nowWeek.week}`);
+  const manualAfwKnownBy = opts.afwKnownBy ?? cutoff.enteredBy;
+  const afw = resolveLabAfw(inputs, asOfIndex, cutoff.enteredBy, manualAfwKnownBy);
   const ctx: Context = {
-    inputs, asOf, asOfIndex, cutoff, afw: selectAfw(inputs.afw, asOfIndex, cutoff.enteredBy),
+    inputs, asOf, asOfIndex, cutoff, afw: afw.selected, targetAfw: afw.targetAfw, afwWarnings: afw.warnings, manualAfwKnownBy,
     measuredStems: isFinite(latestMeasured) ? cov.get(latestMeasured)?.measuredStems ?? 0 : 0, baseWarnings,
   };
   const draws = opts.draws ?? BOOTSTRAP_DRAWS;

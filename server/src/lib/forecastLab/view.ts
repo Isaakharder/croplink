@@ -1,8 +1,10 @@
 // Assembles the Forecast Lab page model — pure. For each week:
 //  - past weeks (<= as-of): the forecast that was ISSUED `horizon` weeks
 //    earlier, from immutable snapshots (live preferred over hindcast);
-//  - future weeks: the live snapshot as of the latest survey week, or — if not
-//    issued yet — the current computation, marked as not locked;
+//  - future weeks: the current computation (so a just-saved AFW forecast shows
+//    immediately). If a live snapshot for this as-of week was already locked
+//    with the same result it is shown as locked; if inputs changed since the
+//    lock, the locked value is shown alongside — it stays the one scored;
 //  - the legacy forecast exactly as the legacy endpoint returns it today;
 //  - the GrowLink packed actual with its settled/provisional state.
 import { fromIsoWeekIndex } from '../isoWeek';
@@ -25,6 +27,9 @@ export interface ModelCell {
   warnings: string[];
   diffKg: number | null;
   diffPct: number | null;
+  /** Set when a locked live snapshot for this week differs from the current computation. */
+  lockedKg: number | null;
+  lockedIssuedAt: string | null;
 }
 
 export interface ViewWeek {
@@ -40,6 +45,7 @@ export interface ViewWeek {
   models: Partial<Record<LabModelId, ModelCell>>;
 }
 
+const closeTo = (a: number | null, b: number | null, tol = 0.5) => (a == null || b == null ? a === b : Math.abs(a - b) <= tol);
 const wk = (i: number) => { const w = fromIsoWeekIndex(i); return `${w.year}-W${String(w.week).padStart(2, '0')}`; };
 const diff = (f: number | null, a: ActualWeek | undefined) => (f == null || !a || a.kg == null ? { d: null, p: null } : { d: f - a.kg, p: a.kg > 0 ? ((f - a.kg) / a.kg) * 100 : null });
 
@@ -74,18 +80,23 @@ export function assembleView(args: {
         if (s) cell = fromSnapshot(s);
       } else {
         const s = snapshots.find((x) => x.model_id === m && x.kind === 'live' && x.as_of_index === asOfIndex && x.target_index === i);
-        if (s) cell = fromSnapshot(s);
-        else {
-          const fc = current.find((c) => c.modelId === m);
-          const t = fc?.targets.find((x) => x.index === i);
-          if (fc && t) {
+        const fc = current.find((c) => c.modelId === m);
+        const t = fc?.targets.find((x) => x.index === i);
+        if (fc && t) {
+          const locked = s ? fromSnapshot(s) : null;
+          const same = locked && fc.version === locked.version && closeTo(locked.kg, t.kg) && closeTo(locked.afwG, t.afw?.grams ?? null);
+          if (locked && same) cell = locked;
+          else {
             cell = {
               kg: t.kg, low: t.low, high: t.high, locked: false, kind: 'current', issuedAt: null, asOfWeek: wk(fc.asOfIndex), version: fc.version,
-              afwG: fc.afw?.grams ?? null, afwSource: fc.afw?.source ?? null, afwWeek: fc.afw ? wk(fc.afw.asOfIndex) : null, harvestWindow: t.harvestWindow,
-              warnings: [...fc.warnings, ...t.warnings, 'not-locked: computed now; becomes a locked snapshot at the next lab cycle'], diffKg: null, diffPct: null,
+              afwG: t.afw?.grams ?? null, afwSource: t.afw?.source ?? null, afwWeek: t.afw ? wk(t.afw.fromIndex) : null, harvestWindow: t.harvestWindow,
+              warnings: [...fc.warnings, ...t.warnings, locked
+                ? `changed-since-lock: inputs changed after this week's forecast was locked (${locked.kg == null ? 'no kg' : `${Math.round(locked.kg)} kg`} at ${locked.afwG ?? '?'} g, issued ${locked.issuedAt?.slice(0, 16).replace('T', ' ')} UTC); the locked value is the one scored`
+                : 'not-locked: computed now; becomes a locked snapshot at the next lab cycle'],
+              diffKg: null, diffPct: null, lockedKg: locked?.kg ?? null, lockedIssuedAt: locked?.issuedAt ?? null,
             };
           }
-        }
+        } else if (s) cell = fromSnapshot(s);
       }
       if (cell) {
         const d = diff(cell.kg, a);
@@ -104,6 +115,6 @@ function fromSnapshot(s: SnapshotRow): ModelCell {
   return {
     kg: n(s.forecast_kg), low: n(s.range_low_kg), high: n(s.range_high_kg), locked: true, kind: s.kind, issuedAt: s.issued_at, asOfWeek: wk(s.as_of_index),
     version: s.model_version, afwG: n(s.afw_g), afwSource: s.afw_source, afwWeek: s.afw_as_of_index != null ? wk(s.afw_as_of_index) : null,
-    harvestWindow: Number(s.harvest_window), warnings: s.warnings ?? [], diffKg: null, diffPct: null,
+    harvestWindow: Number(s.harvest_window), warnings: s.warnings ?? [], diffKg: null, diffPct: null, lockedKg: null, lockedIssuedAt: null,
   };
 }

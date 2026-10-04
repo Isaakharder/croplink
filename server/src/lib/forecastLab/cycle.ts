@@ -65,7 +65,9 @@ export async function runForecastLabCycle(deps: CycleDeps, year: number): Promis
         const asOf = fromIsoWeekIndex(asOfIndex);
         entry.asOf = `${asOf.year}-W${asOf.week}`;
         const issuedAt = now.toISOString();
-        const live = buildLabForecasts(src.inputs, asOf, { now, draws: deps.draws });
+        // Live: AFW forecasts entered up to the issue time apply. Hindcasts
+        // (below) keep the default — only what was entered by their cutoff.
+        const live = buildLabForecasts(src.inputs, asOf, { now, draws: deps.draws, afwKnownBy: now });
         entry.liveInserted = await deps.store.insertSnapshots(live.flatMap((fc) => toSnapshotRows(fc, { runId, kind: 'live', varietyId: v.id, issuedAt, codeVersion: deps.codeVersion })));
 
         const have = await deps.store.snapshotAsOfIndexes(v.id, 'hindcast');

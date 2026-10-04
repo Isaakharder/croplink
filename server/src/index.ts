@@ -41,6 +41,7 @@ import growlinkConnectionRouter from './routes/growlinkConnection';
 import { createGrowlinkYieldWeeksRouter } from './routes/growlinkYieldWeeks';
 import { supabaseYieldWeekRepo } from './lib/growlinkYieldRepo';
 import { createForecastLabRouter } from './routes/forecastLab';
+import { createAfwForecastsRouter } from './routes/afwForecasts';
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -95,6 +96,7 @@ app.use(`${growlinkApi}/variety-links`, growlinkVarietyLinksRouter);
 app.use(`${growlinkApi}/harvest-actuals`, growlinkHarvestActualsRouter);
 app.use(`${growlinkApi}/yield-weeks`, createGrowlinkYieldWeeksRouter(supabaseYieldWeekRepo));
 app.use('/api/forecast-lab', createForecastLabRouter());
+app.use('/api/afw-forecasts', createAfwForecastsRouter());
 
 // Serve static files from client build in production
 if (process.env.NODE_ENV === 'production') {

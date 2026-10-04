@@ -45,11 +45,13 @@ export function createForecastLabRouter(store: LabStore = supabaseLabStore): Rou
       const asOfIndex = latestSurveyIndex(src.inputs.events, now);
       if (asOfIndex == null) return res.json({ variety: { id: variety.id, name: variety.name }, weeks: [], warnings: ['No survey data for this variety yet.'] });
 
-      const stamp = [asOfIndex, src.inputs.events.length, src.inputs.afw.length, src.inputs.afw.map((a) => a.knownAt).sort().at(-1), src.lastV1Sync, variety.updated_at].join('|');
+      // A saved AFW forecast changes the stamp, so projections recompute immediately.
+      const manualStamp = (src.inputs.manualAfw ?? []).reduce((m, e) => Math.max(m, e.id), 0);
+      const stamp = [asOfIndex, src.inputs.events.length, src.inputs.afw.length, src.inputs.afw.map((a) => a.knownAt).sort().at(-1), src.lastV1Sync, variety.updated_at, manualStamp].join('|');
       const key = `${varietyId}|${stamp}`;
       let current = currentCache.get(key);
       if (!current || Date.now() - current.at > CACHE_MS) {
-        current = { at: Date.now(), value: buildLabForecasts(src.inputs, fromIsoWeekIndex(asOfIndex), { now }) };
+        current = { at: Date.now(), value: buildLabForecasts(src.inputs, fromIsoWeekIndex(asOfIndex), { now, afwKnownBy: now }) };
         currentCache.set(key, current);
       }
       const snapshotsEnabled = await store.available();
@@ -69,6 +71,7 @@ export function createForecastLabRouter(store: LabStore = supabaseLabStore): Rou
       else if (!src.v2Available) warnings.push('GrowLink v2 yield detail is not available yet (migration or first sync pending) — AFW falls back to CropLink manual values and settlement uses the 10-day rule.');
       else if (!src.lastV2Sync) warnings.push('GrowLink v2 has never been synced.');
       else if (src.lastV2Sync.status !== 'succeeded') warnings.push(`Last GrowLink v2 sync ${src.lastV2Sync.status}.`);
+      if (!src.afwForecastsAvailable) warnings.push('AFW forecasts are not enabled yet (database migration pending).');
       if (!snapshotsEnabled) warnings.push('Forecast snapshots are not enabled yet (database migration pending) — experimental forecasts below are computed live and are not locked or scored.');
       for (const w of new Set([...(d.warnings ?? [])].filter((x) => /^(afw|measurements|no-afw|forecast-old)/.test(x)))) warnings.push(w);
       const provisional = weeks.filter((w) => w.actual && w.actual.settlement === 'provisional').map((w) => w.label);
@@ -92,6 +95,7 @@ export function createForecastLabRouter(store: LabStore = supabaseLabStore): Rou
           afw: d.afw ? { grams: d.afw.grams, source: d.afw.source, week: `W${fromIsoWeekIndex(d.afw.asOfIndex).week}`, ageWeeks: d.afw.ageWeeks } : null,
           snapshotsEnabled,
           growlinkV2Available: src.v2Available,
+          afwForecastsAvailable: src.afwForecastsAvailable,
         },
         configHistory: history,
         warnings,

@@ -9,6 +9,7 @@ import { isoWeekIndex } from '../isoWeek';
 import { deriveWeeklyAfw, V2DailyRow } from '../growlinkYieldSync';
 import { computeHarvestProjections } from '../../routes/harvestProjections';
 import { AfwPoint, LabInputs, LabVariety } from './engine';
+import { supabaseAfwForecastRepo } from '../afwForecastRepo';
 import { SnapshotRow, V1ActualRow, V2ActualRow, Exclusion } from './evaluation';
 
 type Err = { code?: string; message?: string } | null | undefined;
@@ -57,6 +58,46 @@ export async function loadStatusEvents(varietyId: string, years: number[]): Prom
   return batches.flat().map((s) => ({ plantNodeId: s.plant_node_id, stemId: stemByNode.get(s.plant_node_id) as string, year: s.year, week: s.week_number, status: s.status, createdAt: s.created_at }));
 }
 
+type V2AfwRow = Pick<V2ActualRow, 'packing_year' | 'packing_week' | 'total_kg' | 'settlement_status' | 'upstream_status' | 'upstream_updated_at'> & { daily: V2DailyRow[] | null; daily_breakdown_complete: boolean | null; average_fruit_weight_g: number | string | null };
+type CropLinkAfwRow = { year: number; week_number: number; weight_grams: number | string; created_at: string };
+
+/** GrowLink v2 weekly AFW (exact, fruit-weighted) and CropLink's harvest_afw_by_week rows as AFW points. */
+export function afwPointsFrom(v2Rows: V2AfwRow[], cropLinkRows: CropLinkAfwRow[]): AfwPoint[] {
+  const afw: AfwPoint[] = [];
+  for (const r of v2Rows) {
+    if (r.upstream_status !== 'active') continue;
+    const d = deriveWeeklyAfw({ totalKg: r.total_kg == null ? null : Number(r.total_kg), averageFruitWeightG: r.average_fruit_weight_g == null ? null : Number(r.average_fruit_weight_g), daily: r.daily ?? [], dailyBreakdownComplete: r.daily_breakdown_complete });
+    if (d.afwG) afw.push({ index: isoWeekIndex(r.packing_year, r.packing_week), grams: d.afwG, source: 'growlink-v2', knownAt: r.upstream_updated_at, settled: r.settlement_status === 'settled' });
+  }
+  for (const r of cropLinkRows) {
+    afw.push({ index: isoWeekIndex(r.year, r.week_number), grams: Number(r.weight_grams), source: 'croplink-manual', knownAt: r.created_at, settled: null });
+  }
+  return afw;
+}
+
+/** Just the AFW inputs for one variety (for the AFW forecast editor). */
+export async function loadAfwPoints(varietyId: string): Promise<{ afw: AfwPoint[]; growlinkLinked: boolean; v2Available: boolean }> {
+  const [afwRes, linkRes] = await Promise.all([
+    supabase.from('harvest_afw_by_week').select('year, week_number, weight_grams, created_at').eq('variety_id', varietyId),
+    supabase.from('growlink_variety_links').select('growlink_variety_key').eq('variety_id', varietyId).eq('link_status', 'linked').maybeSingle(),
+  ]);
+  for (const r of [afwRes, linkRes]) if (r.error) throw new Error(r.error.message);
+  const key = (linkRes.data as { growlink_variety_key: string } | null)?.growlink_variety_key ?? null;
+  let v2Rows: V2AfwRow[] = [];
+  let v2Available = Boolean(key);
+  if (key) {
+    try {
+      v2Rows = await fetchAllRows(() => supabase.from('growlink_yield_weeks')
+        .select('id, packing_year, packing_week, total_kg, average_fruit_weight_g, daily, daily_breakdown_complete, settlement_status, upstream_status, upstream_updated_at')
+        .eq('growlink_variety_id', key));
+    } catch (e) {
+      if (!isMissingTable(e as Err) && !/growlink_yield_weeks/.test(String((e as Error).message))) throw e;
+      v2Available = false;
+    }
+  }
+  return { afw: afwPointsFrom(v2Rows, (afwRes.data ?? []) as CropLinkAfwRow[]), growlinkLinked: Boolean(key), v2Available };
+}
+
 export interface SourceData {
   inputs: LabInputs;
   v1Actuals: V1ActualRow[];
@@ -65,16 +106,19 @@ export interface SourceData {
   growlinkVarietyKey: string | null;
   lastV2Sync: { finishedAt: string | null; status: string } | null;
   lastV1Sync: string | null;
+  /** False until the AFW-forecast migration is applied. */
+  afwForecastsAvailable: boolean;
 }
 
 export async function loadSourceData(variety: VarietyRecord, year: number): Promise<SourceData> {
-  const [events, profilesRes, afwRes, linkRes, v1, legacy] = await Promise.all([
+  const [events, profilesRes, afwRes, linkRes, v1, legacy, manualAfw] = await Promise.all([
     loadStatusEvents(variety.id, [year - 1, year]),
     supabase.from('harvest_timing_profiles').select('year, set_week_number, avg_fruit_set').eq('variety_id', variety.id).in('year', [year - 1, year]),
     supabase.from('harvest_afw_by_week').select('year, week_number, weight_grams, created_at').eq('variety_id', variety.id).in('year', [year - 1, year]),
     supabase.from('growlink_variety_links').select('growlink_variety_key').eq('variety_id', variety.id).eq('link_status', 'linked').maybeSingle(),
     fetchAllRows<V1ActualRow & { id: string; synced_at: string }>(() => supabase.from('growlink_harvest_actuals').select('id, year, week_number, kg, updated_at, synced_at').eq('variety_id', variety.id)),
     computeHarvestProjections(year, variety.id, false),
+    supabaseAfwForecastRepo.list(variety.id),
   ]);
   for (const r of [profilesRes, afwRes, linkRes]) if (r.error) throw new Error(r.error.message);
   const key = (linkRes.data as { growlink_variety_key: string } | null)?.growlink_variety_key ?? null;
@@ -95,15 +139,7 @@ export async function loadSourceData(variety: VarietyRecord, year: number): Prom
   const runs = await supabase.from('growlink_sync_runs').select('finished_at, status').eq('kind', 'yield-weeks').order('started_at', { ascending: false }).limit(1);
   if (!runs.error && runs.data?.[0]) lastV2Sync = { finishedAt: runs.data[0].finished_at, status: runs.data[0].status };
 
-  const afw: AfwPoint[] = [];
-  for (const r of v2Rows) {
-    if (r.upstream_status !== 'active') continue;
-    const d = deriveWeeklyAfw({ totalKg: r.total_kg == null ? null : Number(r.total_kg), averageFruitWeightG: r.average_fruit_weight_g == null ? null : Number(r.average_fruit_weight_g), daily: r.daily ?? [], dailyBreakdownComplete: r.daily_breakdown_complete });
-    if (d.afwG) afw.push({ index: isoWeekIndex(r.packing_year, r.packing_week), grams: d.afwG, source: 'growlink-v2', knownAt: r.upstream_updated_at, settled: r.settlement_status === 'settled' });
-  }
-  for (const r of (afwRes.data ?? []) as { year: number; week_number: number; weight_grams: number; created_at: string }[]) {
-    afw.push({ index: isoWeekIndex(r.year, r.week_number), grams: Number(r.weight_grams), source: 'croplink-manual', knownAt: r.created_at, settled: null });
-  }
+  const afw = afwPointsFrom(v2Rows, (afwRes.data ?? []) as CropLinkAfwRow[]);
   const legacyByIndex = new Map<number, { kg: number; fruitPerM2: number }>();
   for (const w of legacy.varieties[0]?.weeks ?? []) legacyByIndex.set(isoWeekIndex(year, w.week), { kg: w.projectedKg, fruitPerM2: w.projectedFruitPerM2 });
 
@@ -114,6 +150,7 @@ export async function loadSourceData(variety: VarietyRecord, year: number): Prom
       afw,
       manualFruitSetPerM2: new Map(((profilesRes.data ?? []) as { year: number; set_week_number: number; avg_fruit_set: number }[]).map((p) => [isoWeekIndex(p.year, p.set_week_number), Number(p.avg_fruit_set) || 0])),
       legacyByIndex,
+      manualAfw: manualAfw ?? [],
     },
     v1Actuals: v1,
     v2Actuals: v2Rows,
@@ -121,6 +158,7 @@ export async function loadSourceData(variety: VarietyRecord, year: number): Prom
     growlinkVarietyKey: key,
     lastV2Sync,
     lastV1Sync: v1.reduce<string | null>((m, r) => (!m || r.synced_at > m ? r.synced_at : m), null),
+    afwForecastsAvailable: manualAfw != null,
   };
 }
 

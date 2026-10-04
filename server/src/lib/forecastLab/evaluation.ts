@@ -95,7 +95,7 @@ export function toSnapshotRows(fc: LabForecast, ctx: { runId: string; kind: Snap
     as_of_year: fc.asOf.year, as_of_week: fc.asOf.week, as_of_index: fc.asOfIndex, input_cutoff: fc.inputCutoff, issued_at: ctx.issuedAt, code_version: ctx.codeVersion,
     target_year: t.year, target_week: t.week, target_index: t.index, horizon: t.horizon,
     forecast_kg: round(t.kg), range_low_kg: round(t.low), range_high_kg: round(t.high), fruit_per_m2: round(t.fruitPerM2, 4),
-    afw_g: fc.afw ? round(fc.afw.grams, 2) : null, afw_source: fc.afw?.source ?? (fc.modelId === 'legacy' ? 'croplink-manual (inside legacy endpoint)' : null), afw_as_of_index: fc.afw?.asOfIndex ?? null,
+    afw_g: t.afw ? round(t.afw.grams, 2) : null, afw_source: t.afw?.source ?? (fc.modelId === 'legacy' ? 'croplink-manual (inside legacy endpoint)' : null), afw_as_of_index: t.afw?.fromIndex ?? null,
     area_m2: fc.areaM2, total_stems: fc.totalStems, measured_stems: fc.measuredStems, pull_out_date: fc.pullOutDate,
     harvest_window: round(t.harvestWindow, 4) as number, coverage: round(t.coverage, 4),
     params: fc.params, evidence: fc.evidence, warnings: [...fc.warnings, ...t.warnings],
