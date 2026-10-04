@@ -72,6 +72,13 @@ export function createForecastLabRouter(store: LabStore = supabaseLabStore): Rou
       else if (!src.lastV2Sync) warnings.push('GrowLink v2 has never been synced.');
       else if (src.lastV2Sync.status !== 'succeeded') warnings.push(`Last GrowLink v2 sync ${src.lastV2Sync.status}.`);
       if (!src.afwForecastsAvailable) warnings.push('AFW forecasts are not enabled yet (database migration pending).');
+      if (snapshotsEnabled) {
+        const liveTargets = new Set(snapshots.filter((x) => x.kind === 'live' && x.experimental).map((x) => x.target_index));
+        const pastWithActual = weeks.filter((w) => w.past && w.actual?.kg != null);
+        const unlocked = pastWithActual.filter((w) => !liveTargets.has(w.index));
+        if (pastWithActual.length && unlocked.length === pastWithActual.length) warnings.push('No forecast issued at the time (locked live snapshot) exists for any past week yet — past-week comparisons are hindcasts reconstructed from data known then, not evidence of live accuracy.');
+        else if (unlocked.length) warnings.push(`${unlocked.length} past week(s) have no locked live forecast; they show hindcasts only.`);
+      }
       if (!snapshotsEnabled) warnings.push('Forecast snapshots are not enabled yet (database migration pending) — experimental forecasts below are computed live and are not locked or scored.');
       for (const w of new Set([...(d.warnings ?? [])].filter((x) => /^(afw|measurements|no-afw|forecast-old)/.test(x)))) warnings.push(w);
       const provisional = weeks.filter((w) => w.actual && w.actual.settlement === 'provisional').map((w) => w.label);

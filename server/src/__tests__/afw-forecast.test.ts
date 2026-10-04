@@ -251,6 +251,10 @@ console.log('cycle: live snapshots use forecasts entered by issue time; hindcast
     process.env.SUPABASE_SERVICE_ROLE_KEY ??= 'dummy';
     const express = (await import('express')).default;
     const { createAfwForecastsRouter } = await import('../routes/afwForecasts');
+    const { createAfwEditorAuth, MAX_FAILURES, WINDOW_MS } = await import('../middleware/afwEditorAuth');
+    const PASS = 'test-only-editor-passcode';
+    let clock = Date.parse('2026-10-04T12:30:00Z');
+    deps.writeAuth = createAfwEditorAuth({ env: { AFW_EDITOR_KEY: PASS }, now: () => clock });
     const app = express();
     app.use(express.json());
     app.use('/api/afw-forecasts', createAfwForecastsRouter(deps));
@@ -258,11 +262,45 @@ console.log('cycle: live snapshots use forecasts entered by issue time; hindcast
     const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}/api/afw-forecasts`;
     const VID = '00000000-0000-4000-8000-0000000000aa';
     const get = async () => (await fetch(`${url}?varietyId=${VID}`)).json() as Promise<any>;
-    const post = async (body: unknown) => { const r = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }); return { status: r.status, body: await r.json() as any }; };
+    const postAs = async (body: unknown, key: string | null, ip = '203.0.113.7') => {
+      const headers: Record<string, string> = { 'Content-Type': 'application/json', 'X-Forwarded-For': `10.0.0.1, ${ip}` };
+      if (key != null) headers['X-AFW-Editor-Key'] = key;
+      const r = await fetch(url, { method: 'POST', headers, body: JSON.stringify(body) });
+      return { status: r.status, body: await r.json() as any };
+    };
+    const post = (body: unknown) => postAs(body, PASS, '198.51.100.1');
     try {
       const g = await get();
       assert('GET: current week through pull-out, W53 included', [g.weeks.length, g.weeks[0].label, g.weeks.at(-1).label, g.window.pullOutKnown], [14, '2026-W40', '2026-W53', true]);
       assert('GET: without forecasts every week uses settled GrowLink W38', g.weeks.every((w: any) => w.used.source === 'growlink-settled' && w.used.fromWeek === '2026-W38'), true);
+
+      const valid = { varietyId: VID, expectedLatestEntryId: 0, changes: [{ year: 2026, week: 41, grams: 200 }] };
+      assert('no passcode → 401, nothing saved', [(await postAs(valid, null)).status, log.length], [401, 0]);
+      const wrong = await postAs(valid, 'wrong');
+      assert('wrong passcode → 401 (asks for the passcode), nothing saved', [wrong.status, wrong.body.passcodeRequired, log.length], [401, true, 0]);
+      for (let k = 2; k < MAX_FAILURES; k++) await postAs(valid, 'wrong');
+      const locked = await postAs(valid, PASS);
+      assert(`after ${MAX_FAILURES} wrong passcodes that IP is locked out, even with the right one`, [locked.status, log.length], [429, 0]);
+      assert('…other IPs are not affected (a valid save from another IP still passes auth)', (await postAs({ ...valid, expectedLatestEntryId: 99 }, PASS, '192.0.2.9')).status, 409);
+      clock += WINDOW_MS + 1;
+      assert('…lockout ends after the window', (await postAs({ ...valid, expectedLatestEntryId: 99 }, PASS)).status, 409);
+      assert('GET needs no passcode (read API stays open)', (await fetch(`${url}?varietyId=${VID}`)).status, 200);
+      const unconfigured = express();
+      unconfigured.use(express.json());
+      unconfigured.use('/x', createAfwForecastsRouter({ ...deps, writeAuth: createAfwEditorAuth({ env: {} }) }));
+      const s2 = unconfigured.listen(0);
+      const r2 = await fetch(`http://127.0.0.1:${(s2.address() as AddressInfo).port}/x`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-AFW-Editor-Key': 'anything' }, body: JSON.stringify(valid) });
+      s2.close();
+      assert('AFW_EDITOR_KEY not set on the server → 503 for every save (fails closed)', [r2.status, log.length], [503, 0]);
+      const { writeAuth: _w, ...noAuthDeps } = deps;
+      delete process.env.AFW_EDITOR_KEY;
+      const dflt = express();
+      dflt.use(express.json());
+      dflt.use('/y', createAfwForecastsRouter(noAuthDeps));
+      const s3 = dflt.listen(0);
+      const r3 = await fetch(`http://127.0.0.1:${(s3.address() as AddressInfo).port}/y`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(valid) });
+      s3.close();
+      assert('the router is protected by default (no auth injected → passcode middleware, fails closed)', [r3.status, log.length], [503, 0]);
 
       const stale = await post({ varietyId: VID, expectedLatestEntryId: 7, changes: [{ year: 2026, week: 41, grams: 200 }] });
       assert('stale editor → 409, nothing saved', [stale.status, log.length], [409, 0]);

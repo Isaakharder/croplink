@@ -14,7 +14,7 @@ import { createHash, timingSafeEqual } from 'crypto';
  * time per input length, and both inputs are hashed the same way regardless
  * of whether they match.
  */
-function secretsMatch(a: string, b: string): boolean {
+export function secretsMatch(a: string, b: string): boolean {
   const hashA = createHash('sha256').update(a).digest();
   const hashB = createHash('sha256').update(b).digest();
   return timingSafeEqual(hashA, hashB);

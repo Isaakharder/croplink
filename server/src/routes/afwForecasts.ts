@@ -3,9 +3,11 @@
 //        with the saved forecast, the GrowLink actual (read-only) and the AFW
 //        the experimental projections use for each week, with its source.
 //   POST /api/afw-forecasts               → one Save: append-only rows, all or none.
+//        Requires the editor passcode (X-AFW-Editor-Key, see middleware/afwEditorAuth).
 // Forecasts never touch GrowLink actuals or CropLink's harvest_afw_by_week.
 import { randomUUID } from 'crypto';
-import { Router, Request, Response, NextFunction } from 'express';
+import { Router, Request, Response, NextFunction, RequestHandler } from 'express';
+import { createAfwEditorAuth } from '../middleware/afwEditorAuth';
 import { supabase } from '../lib/supabase';
 import { fromIsoWeekIndex, isoWeekIndex } from '../lib/isoWeek';
 import { harvestWindowFraction } from '../lib/cropWindow';
@@ -23,6 +25,8 @@ export interface AfwForecastDeps {
   variety: (id: string) => Promise<VarietyRow | null>;
   afwPoints: (varietyId: string) => Promise<{ afw: AfwPoint[]; growlinkLinked: boolean; v2Available: boolean }>;
   now: () => Date;
+  /** Guards writes. Defaults to the editor-passcode middleware. */
+  writeAuth?: RequestHandler;
 }
 
 const label = (i: number) => { const w = fromIsoWeekIndex(i); return `${w.year}-W${String(w.week).padStart(2, '0')}`; };
@@ -103,7 +107,7 @@ export function createAfwForecastsRouter(deps: AfwForecastDeps = supabaseAfwFore
     } catch (e) { next(e); }
   });
 
-  router.post('/', async (req: Request, res: Response, next: NextFunction) => {
+  router.post('/', deps.writeAuth ?? createAfwEditorAuth(), async (req: Request, res: Response, next: NextFunction) => {
     try {
       const varietyId = String(req.body?.varietyId ?? '');
       if (!UUID.test(varietyId)) return res.status(400).json({ error: 'varietyId is required' });
