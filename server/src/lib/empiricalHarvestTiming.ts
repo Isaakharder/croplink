@@ -48,7 +48,7 @@ function getIsoWeek(d: Date): number {
   return Math.ceil((((date.getTime() - yearStart.getTime()) / 86400000) + 1) / 7);
 }
 
-interface FruitInstanceRow {
+export interface FruitInstanceRow {
   set_year: number;
   set_week_number: number;
   status: string;
@@ -157,8 +157,19 @@ export async function computeEmpiricalHarvestTiming(
   );
 
   const today = new Date();
-  const todayAbsWeek = today.getFullYear() * 52 + getIsoWeek(today);
+  return computeEmpiricalHarvestTimingFromRows(all, year, today.getFullYear() * 52 + getIsoWeek(today));
+}
 
+/**
+ * The pure core of computeEmpiricalHarvestTiming — identical logic, with
+ * the fruit_instances rows and "today" passed in, so a chronological
+ * backtest can evaluate this exact model as of any past week.
+ */
+export function computeEmpiricalHarvestTimingFromRows(
+  all: FruitInstanceRow[],
+  year: number,
+  todayAbsWeek: number
+): EmpiricalHarvestTimingResult {
   const isResolved = (r: FruitInstanceRow) => r.status === 'harvested' || r.status === 'aborted' || r.status === 'pruned';
 
   function harvestedOffset(r: FruitInstanceRow): number | null {
