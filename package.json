@@ -12,7 +12,8 @@
     "start": "npm run start --workspace=server",
     "cron:rollup": "npm run cron:rollup --workspace=server",
     "cron:snapshot": "npm run cron:snapshot --workspace=server",
-    "install:all": "npm install && npm install --workspace=client && npm install --workspace=server"
+    "install:all": "npm install && npm install --workspace=client && npm install --workspace=server",
+    "cron:forecast-lab": "npm run cron:forecast-lab --workspace=server"
   },
   "devDependencies": {
     "concurrently": "^8.2.2"
