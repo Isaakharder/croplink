@@ -238,3 +238,47 @@ The raw key is returned once. Paste it straight into CropLink's Railway `GROWLIN
 The existing v1 key (still stored in CropLink's `crop_integration_settings.secret_key`) keeps `harvest-actuals:read` only. Moving it to an environment secret and clearing that column is a follow-up.
 
 Before step 4 the admin route returns 400 for a request with scopes. That's expected.
+
+## E. CropLink `20261006000000_forecast_lab.sql` (Forecast Lab)
+
+Affected: four new tables (`forecast_lab_runs`, `forecast_lab_snapshots`, `forecast_lab_exclusions`, `variety_config_history`), RLS on and no policies. Two new functions: `forecast_lab_snapshots_immutable`, `varieties_config_audit`. Triggers:
+- `forecast_lab_snapshots_no_update_delete` and `forecast_lab_snapshots_no_truncate` (snapshots can never be changed).
+- `varieties_config_audit_trg`: after insert/update on `varieties`, records changes to scaling fields.
+
+The migration also backfills one baseline history row per variety per field. Depends on step 5 (`iso_weeks_in_year`).
+
+Preflight (read-only):
+
+```sql
+begin transaction read only;
+-- E1 expect four nulls and a non-null function
+select to_regclass('public.forecast_lab_runs'), to_regclass('public.forecast_lab_snapshots'), to_regclass('public.forecast_lab_exclusions'),
+       to_regclass('public.variety_config_history'), to_regprocedure('public.iso_weeks_in_year(integer)');
+-- E2 the varieties columns the audit trigger reads (expect 8 rows)
+select column_name from information_schema.columns where table_schema = 'public' and table_name = 'varieties'
+   and column_name in ('area_m2', 'plant_count', 'total_stem_count', 'is_active', 'plant_date', 'pull_out_date', 'case_kg', 'average_fruit_weight_grams');
+-- E3 existing triggers on varieties (review; expect only the updated_at trigger, if any)
+select tgname, pg_get_triggerdef(oid) from pg_trigger where not tgisinternal and tgrelid = 'public.varieties'::regclass;
+-- E4 baseline rows the backfill will write
+select count(*) * 8 as baseline_rows from public.varieties;
+rollback;
+```
+
+Apply inside `begin; … commit;`. Verify: E1 returns four non-null tables, and `select count(*) from variety_config_history` equals E4.
+
+Rollback (snapshots are immutable by trigger, but dropping the table is allowed; export first if any cycle has run):
+
+```sql
+begin;
+drop trigger if exists varieties_config_audit_trg on public.varieties;
+drop function if exists public.varieties_config_audit();
+drop table if exists public.forecast_lab_snapshots;
+drop function if exists public.forecast_lab_snapshots_immutable();
+drop table if exists public.forecast_lab_exclusions, public.forecast_lab_runs, public.variety_config_history;
+commit;
+```
+
+## F. Forecast Lab cycle (after E and step 7)
+
+- First run, by hand: `POST /api/forecast-lab/cycle` with `X-Internal-Ops-Key`. It syncs GrowLink v2 if `GROWLINK_CROPLINK_KEY` is set, locks live forecasts, and backfills labelled hindcasts once. Re-running is safe: snapshots are insert-only and keyed.
+- Railway cron service `croplink-forecast-lab-cron`, same repo as the existing cron services: start command `npm run cron:forecast-lab`, variables `CROPLINK_INTERNAL_BASE_URL` and `INTERNAL_OPS_KEY` (as for the rollup cron). Suggested schedule `30 10 * * *` (daily 10:30 UTC). Weekly settlement is picked up automatically, because scoring is computed from settled weeks when the page is read.
