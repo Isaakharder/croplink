@@ -682,8 +682,19 @@ function HarvestActualsTab() {
           <p>
             Fetched {syncResult.fetched} record{syncResult.fetched === 1 ? '' : 's'} from GrowLink —{' '}
             {syncResult.created} new, {syncResult.updated} updated, {syncResult.unchanged} unchanged
-            {syncResult.skipped > 0 ? `, ${syncResult.skipped} skipped (malformed)` : ''}.
+            {syncResult.skipped > 0 ? `, ${syncResult.skipped} skipped (invalid)` : ''}
+            {syncResult.failed > 0 ? `, ${syncResult.failed} failed to save` : ''}.
           </p>
+          {syncResult.rejectedRecords?.length > 0 && (
+            <ul style={{ margin: '4px 0 8px 18px', fontSize: 12 }}>
+              {syncResult.rejectedRecords.slice(0, 20).map((r, i) => (
+                <li key={`${r.harvestId}-${i}`}>
+                  {r.harvestId ?? '(no id)'} — {String(r.year)} W{String(r.week)}: {r.reason}
+                </li>
+              ))}
+              {syncResult.rejectedRecords.length > 20 && <li>…and {syncResult.rejectedRecords.length - 20} more (see server log)</li>}
+            </ul>
+          )}
           <p>
             {syncResult.matched} matched to a variety already set up in CropLink
             {syncResult.unmatched > 0

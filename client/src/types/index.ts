@@ -814,7 +814,11 @@ export interface GrowlinkHarvestActualsSyncResult {
   unchanged: number;
   matched: number;
   unmatched: number;
+  /** Failed validation (malformed, or a week that doesn't exist in its ISO year). */
   skipped: number;
+  /** Valid but the database rejected the write — every other record was still saved. */
+  failed: number;
+  rejectedRecords: { harvestId: string | null; year: unknown; week: unknown; stage: 'validation' | 'write'; reason: string }[];
   syncedAt: string;
 }
 
