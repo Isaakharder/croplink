@@ -835,3 +835,100 @@ export interface MeasurementSummaryResponse {
   };
   records: MeasurementSummaryRecord[];
 }
+
+// ── Forecast Lab (experimental) ─────────────────────────────────────────────
+export type ForecastLabModelId = 'legacy' | 'open-fruit-d' | 'interval-censored-recent';
+
+export interface ForecastLabModelMeta { id: ForecastLabModelId; version: string; label: string; experimental: boolean }
+
+export interface ForecastLabCell {
+  kg: number | null;
+  low: number | null;
+  high: number | null;
+  locked: boolean;
+  kind: 'live' | 'hindcast' | 'current';
+  issuedAt: string | null;
+  asOfWeek: string;
+  version: string;
+  afwG: number | null;
+  afwSource: string | null;
+  afwWeek: string | null;
+  harvestWindow: number;
+  warnings: string[];
+  diffKg: number | null;
+  diffPct: number | null;
+}
+
+export interface ForecastLabWeek {
+  index: number;
+  year: number;
+  week: number;
+  label: string;
+  past: boolean;
+  legacyKg: number | null;
+  actual: { kg: number | null; settlement: 'settled' | 'provisional'; source: 'growlink-v2' | 'growlink-v1'; settlementSource: string } | null;
+  legacyDiffKg: number | null;
+  legacyDiffPct: number | null;
+  models: Partial<Record<ForecastLabModelId, ForecastLabCell>>;
+}
+
+export interface ForecastLabCurrent {
+  modelId: ForecastLabModelId;
+  version: string;
+  experimental: boolean;
+  inputCutoff: string;
+  afw: { grams: number; source: string; asOfIndex: number; ageWeeks: number } | null;
+  areaM2: number;
+  totalStems: number;
+  measuredStems: number;
+  pullOutDate: string | null;
+  params: Record<string, unknown>;
+  evidence: Record<string, unknown>;
+  warnings: string[];
+}
+
+export interface ForecastLabView {
+  experimental: true;
+  variety: { id: string; name: string; areaM2: number; totalStems: number; plantCount: number | null; pullOutDate: string | null; configUpdatedAt: string | null };
+  asOf: { index: number; label: string };
+  horizon: number;
+  models: ForecastLabModelMeta[];
+  current: ForecastLabCurrent[];
+  freshness: {
+    latestSurveyWeek: string;
+    latestSurveyEnteredAt: string | null;
+    lastGrowlinkV1Sync: string | null;
+    lastGrowlinkV2Sync: { finishedAt: string | null; status: string } | null;
+    latestActualWeek: string | null;
+    latestSettledWeek: string | null;
+    afw: { grams: number; source: string; week: string; ageWeeks: number } | null;
+    snapshotsEnabled: boolean;
+    growlinkV2Available: boolean;
+  };
+  configHistory: { field: string; old_value: unknown; new_value: unknown; effective_from: string; changed_at: string; source: string; note: string | null }[];
+  warnings: string[];
+  weeks: ForecastLabWeek[];
+}
+
+export interface ForecastLabStat { n: number; sumForecastKg: number; sumActualKg: number; biasPct: number | null; wapePct: number | null; maeKg: number | null }
+
+export interface ForecastLabModelReport {
+  modelId: ForecastLabModelId;
+  label: string;
+  experimental: boolean;
+  versions: string[];
+  overall: ForecastLabStat;
+  byHorizon: Record<string, ForecastLabStat>;
+  twoWeekBlocks: ForecastLabStat;
+  intervalCoverage: { n: number; inside: number; rate: number | null };
+  byStage: Record<string, ForecastLabStat>;
+  byVariety: Record<string, ForecastLabStat>;
+  recommendation: { status: 'baseline' | 'experimental' | 'meets-criteria-review-required'; reasons: string[] };
+}
+
+export interface ForecastLabMetrics {
+  snapshotsEnabled: boolean;
+  varieties?: { id: string; name: string }[];
+  criteria: Record<string, unknown>;
+  reports: { kind: 'live' | 'hindcast'; scored: number; models: ForecastLabModelReport[]; exclusions: { reason: string; count: number }[] }[];
+}

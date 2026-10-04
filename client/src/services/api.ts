@@ -575,3 +575,12 @@ export const projectionApi = {
   get: (varietyId: string, year: number) =>
     request<import('../types').ProjectionResult>(`/projection?varietyId=${varietyId}&year=${year}`),
 };
+
+// Forecast Lab — experimental forecasts beside the legacy forecast.
+const FORECAST_LAB_BASE = apiUrl('/api/forecast-lab');
+export const forecastLabApi = {
+  view: (year: number, varietyId: string, horizon: number) =>
+    requestFrom<import('../types').ForecastLabView>(FORECAST_LAB_BASE, `/view?year=${year}&varietyId=${encodeURIComponent(varietyId)}&horizon=${horizon}`),
+  metrics: (year: number) =>
+    requestFrom<import('../types').ForecastLabMetrics>(FORECAST_LAB_BASE, `/metrics?year=${year}`),
+};
