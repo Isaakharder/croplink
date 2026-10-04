@@ -1,5 +1,6 @@
 import { Router, Request, Response, NextFunction } from 'express';
 import { supabase } from '../lib/supabase';
+import { isValidIsoWeek, weeksInIsoYear } from '../lib/isoWeek';
 
 const router = Router();
 
@@ -36,8 +37,8 @@ router.post('/upsert-many', async (req: Request, res: Response, next: NextFuncti
       if (!row.variety_id || !row.year || row.set_week_number === undefined) {
         return res.status(400).json({ error: 'Each row needs variety_id, year, set_week_number' });
       }
-      if (row.set_week_number < 1 || row.set_week_number > 52) {
-        return res.status(400).json({ error: 'set_week_number must be 1–52' });
+      if (!isValidIsoWeek(Number(row.year), Number(row.set_week_number))) {
+        return res.status(400).json({ error: `set_week_number must be 1–${weeksInIsoYear(Number(row.year))} for ${row.year}` });
       }
     }
 

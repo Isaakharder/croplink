@@ -1,5 +1,6 @@
 import { Router, Request, Response, NextFunction } from 'express';
 import { supabase } from '../lib/supabase';
+import { isValidIsoWeek, weeksInIsoYear } from '../lib/isoWeek';
 
 const router = Router();
 
@@ -68,8 +69,8 @@ router.post('/upsert', async (req: Request, res: Response, next: NextFunction) =
     if (!plantNodeId || !year || !weekNumber) {
       return res.status(400).json({ error: 'plantNodeId, year, and weekNumber are required' });
     }
-    if (weekNumber < 1 || weekNumber > 53) {
-      return res.status(400).json({ error: 'weekNumber must be between 1 and 53' });
+    if (!isValidIsoWeek(Number(year), Number(weekNumber))) {
+      return res.status(400).json({ error: `weekNumber must be between 1 and ${weeksInIsoYear(Number(year))} for ${year}` });
     }
 
     // Save the weekly node status (existing behaviour, unchanged)

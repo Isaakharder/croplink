@@ -1,30 +1,18 @@
 import { Router, Request, Response, NextFunction } from 'express';
 import { supabase } from '../lib/supabase';
+import { isoWeekIndex, isoWeekOfDate, isValidIsoWeek, weeksInIsoYear } from '../lib/isoWeek';
 
 const router = Router();
-
-// Same ISO-week calculation ripeningActuals.ts and breakerLearning.ts each
-// already carry their own copy of — kept local here too rather than
-// centralized, matching that existing per-file convention.
-function getIsoWeek(d: Date): number {
-  const date = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
-  const day = date.getUTCDay() || 7;
-  date.setUTCDate(date.getUTCDate() + 4 - day);
-  const yearStart = new Date(Date.UTC(date.getUTCFullYear(), 0, 1));
-  return Math.ceil((((date.getTime() - yearStart.getTime()) / 86400000) + 1) / 7);
-}
 
 /**
  * True when (year, week) is strictly after today's ISO year/week — i.e. a
  * week that hasn't happened yet, so it cannot have a real harvest
- * measurement. Compares as a single absolute-week number (year*52+week),
- * the same 52-week-per-year convention used elsewhere (breakerLearning,
- * harvestProjections, ripeningActuals) for cross-year comparisons.
+ * measurement. Compared as exact ISO-week indexes so W53 and year
+ * boundaries order correctly.
  */
 function isFutureWeek(year: number, week: number): boolean {
-  const today = new Date();
-  const todayAbsWeek = today.getFullYear() * 52 + getIsoWeek(today);
-  return year * 52 + week > todayAbsWeek;
+  const today = isoWeekOfDate(new Date());
+  return isoWeekIndex(year, week) > isoWeekIndex(today.year, today.week);
 }
 
 router.get('/', async (req: Request, res: Response, next: NextFunction) => {
@@ -74,6 +62,10 @@ router.post('/upsert-many', async (req: Request, res: Response, next: NextFuncti
 
     const skipped: { week_number: number; reason: string }[] = [];
     const rowsToUpsert = rows.filter((r) => {
+      if (!isValidIsoWeek(r.year, r.week_number)) {
+        skipped.push({ week_number: r.week_number, reason: `Week ${r.week_number} doesn't exist in ${r.year} (valid: 1–${Number.isInteger(r.year) ? weeksInIsoYear(r.year) : 52})` });
+        return false;
+      }
       // A real harvest measurement cannot exist for a week that hasn't
       // happened yet — reject outright rather than silently downgrading to
       // 'override', so a future-dated guess never gets stored with the

@@ -1,5 +1,6 @@
 import { Router, Request, Response, NextFunction } from 'express';
 import { supabase } from '../lib/supabase';
+import { isValidIsoWeek, weeksInIsoYear } from '../lib/isoWeek';
 
 const router = Router();
 
@@ -26,8 +27,8 @@ router.post('/', async (req: Request, res: Response, next: NextFunction) => {
     if (!variety_id || !year || !week_number || kg === undefined) {
       return res.status(400).json({ error: 'variety_id, year, week_number, and kg are required' });
     }
-    if (week_number < 1 || week_number > 52) {
-      return res.status(400).json({ error: 'week_number must be 1–52' });
+    if (!isValidIsoWeek(Number(year), Number(week_number))) {
+      return res.status(400).json({ error: `week_number must be 1–${weeksInIsoYear(Number(year))} for ${year}` });
     }
     if (kg < 0) {
       return res.status(400).json({ error: 'kg cannot be negative' });
