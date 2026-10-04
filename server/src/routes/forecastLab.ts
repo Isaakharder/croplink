@@ -71,6 +71,12 @@ export function createForecastLabRouter(store: LabStore = supabaseLabStore): Rou
       else if (!src.v2Available) warnings.push('GrowLink v2 yield detail is not available yet (migration or first sync pending) — AFW falls back to CropLink manual values and settlement uses the 10-day rule.');
       else if (!src.lastV2Sync) warnings.push('GrowLink v2 has never been synced.');
       else if (src.lastV2Sync.status !== 'succeeded') warnings.push(`Last GrowLink v2 sync ${src.lastV2Sync.status}.`);
+      const futureWeeks = weeks.filter((w) => !w.past);
+      const noLegacy = futureWeeks.filter((w) => !(w.legacyKg && w.legacyKg > 0));
+      if (futureWeeks.length && noLegacy.length) {
+        const lastLegacy = [...src.inputs.legacyByIndex].filter(([, x]) => x.kg > 0).map(([i]) => i).sort((a, b) => a - b).at(-1);
+        warnings.push(`Legacy projection has no forecast for ${noLegacy.map((w) => `W${w.week}`).join(', ')}${lastLegacy != null ? ` (its last projected week is W${fromIsoWeekIndex(lastLegacy).week})` : ''} — the 0 shown there means "no legacy projection", not a prediction of zero.`);
+      }
       if (!src.afwForecastsAvailable) warnings.push('AFW forecasts are not enabled yet (database migration pending).');
       if (snapshotsEnabled) {
         const liveTargets = new Set(snapshots.filter((x) => x.kind === 'live' && x.experimental).map((x) => x.target_index));

@@ -285,6 +285,10 @@ console.log('cycle: live snapshots use forecasts entered by issue time; hindcast
       clock += WINDOW_MS + 1;
       assert('…lockout ends after the window', (await postAs({ ...valid, expectedLatestEntryId: 99 }, PASS)).status, 409);
       assert('GET needs no passcode (read API stays open)', (await fetch(`${url}?varietyId=${VID}`)).status, 200);
+      const { buildEditorModel } = await import('../routes/afwForecasts');
+      const noGl = buildEditorModel({ variety: { id: VID, name: 'Mathieu', pull_out_date: '2026-12-31', is_active: true }, entries: [], now: new Date('2026-10-04T12:00:00Z'), growlinkLinked: true, v2Available: true,
+        afw: [{ index: I(32), grams: 218, source: 'croplink-manual', knownAt: '2026-08-08T00:00:00Z', settled: null }] });
+      assert('no GrowLink AFW at all → explicit warning, and the CropLink fallback is named', [noGl.warnings.some((w) => w.startsWith('No GrowLink AFW has been received yet')), noGl.warnings.some((w) => w.includes("CropLink's 218 g from 2026-W32")), noGl.baseline?.source], [true, true, 'croplink-manual']);
       const unconfigured = express();
       unconfigured.use(express.json());
       unconfigured.use('/x', createAfwForecastsRouter({ ...deps, writeAuth: createAfwEditorAuth({ env: {} }) }));

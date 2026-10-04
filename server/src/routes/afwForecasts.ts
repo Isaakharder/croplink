@@ -62,6 +62,8 @@ export function buildEditorModel(args: { variety: VarietyRow; entries: ManualAfw
   if (!win.pullOutKnown) warnings.push('No pull-out date set for this variety — showing the next 12 weeks. Set a pull-out date to edit through the end of the crop.');
   if (!args.growlinkLinked) warnings.push('Not linked to a GrowLink variety — weeks without a manual forecast fall back to CropLink AFW.');
   else if (!args.v2Available) warnings.push('GrowLink AFW detail is not available yet (sync pending) — weeks without a manual forecast fall back to CropLink AFW.');
+  else if (!afw.some((p) => p.source === 'growlink-v2')) warnings.push('No GrowLink AFW has been received yet (GrowLink v2 sync has not run) — weeks without a manual forecast use the CropLink fallback AFW.');
+  if (baseline && baseline.source === 'croplink-manual') warnings.push(`Fallback AFW is CropLink's ${baseline.grams} g from ${baseline.fromWeek} — enter AFW forecasts for the weeks you want to control.`);
   return {
     variety: { id: variety.id, name: variety.name, pullOutDate: variety.pull_out_date },
     window: { from: label(win.from), to: label(win.to), pullOutKnown: win.pullOutKnown },
