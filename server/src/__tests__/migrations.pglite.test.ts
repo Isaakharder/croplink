@@ -75,6 +75,41 @@ const migration = (f: string) => readFileSync(path.resolve(__dirname, '../../../
   const secretCols = await db.query<{ n: number }>(`select count(*)::int n from information_schema.columns where table_name like 'growlink_sync_%' and column_name ~ '(secret|key)$' and column_name <> 'key_fingerprint'`);
   assert('no secret/key columns besides the fingerprint', secretCols.rows[0].n, 0);
 
+  console.log('20261006000000_forecast_lab.sql');
+  await db.exec(`create table varieties (id uuid primary key default gen_random_uuid(), name text, area_m2 numeric, plant_count integer, total_stem_count integer,
+    average_fruit_weight_grams numeric, is_active boolean not null default true, plant_date date, pull_out_date date, case_kg numeric,
+    created_at timestamptz not null default now(), updated_at timestamptz not null default now());
+    insert into varieties (id, name, area_m2, plant_count, total_stem_count, pull_out_date, created_at, updated_at)
+    values ('00000000-0000-4000-8000-0000000000aa', 'Mathieu', 11627, 40068, 80136, '2026-12-31', '2026-05-25', '2026-09-19 21:36:18+00');`);
+  await db.exec(migration('20261006000000_forecast_lab.sql'));
+  const baseline = await db.query<{ field: string; source: string; note: string }>(`select field, source, note from variety_config_history order by field`);
+  assert('baseline config history: 8 fields per variety, marked backfill', [baseline.rows.length, baseline.rows.every((r) => r.source === 'backfill')], [8, true]);
+  assert('baseline notes that earlier values are unknown (incl. the 2026-09-19 change)', baseline.rows[0].note.includes('2026-09-19'), true);
+  await db.exec(`update varieties set area_m2 = 11787, name = 'Mathieu B' where id = '00000000-0000-4000-8000-0000000000aa'`);
+  const ch = await db.query<{ field: string; old_value: number; new_value: number; source: string }>(`select field, old_value, new_value, source from variety_config_history where source <> 'backfill'`);
+  assert('a scaling change is recorded (non-scaling fields are not)', ch.rows.map((r) => [r.field, Number(r.old_value), Number(r.new_value), r.source]), [['area_m2', 11627, 11787, 'api']]);
+  await db.exec(`insert into forecast_lab_runs (id, kind, status, started_at) values ('00000000-0000-4000-8000-0000000000b1', 'cycle', 'running', now())`);
+  const snap = (over: Record<string, unknown> = {}) => {
+    const r: Record<string, unknown> = { run_id: '00000000-0000-4000-8000-0000000000b1', kind: 'live', variety_id: '00000000-0000-4000-8000-0000000000aa', model_id: 'open-fruit-d',
+      model_version: 'open-fruit-d/1.0.0', experimental: true, as_of_year: 2026, as_of_week: 52, as_of_index: 2964, input_cutoff: '2026-12-29T00:00:00Z',
+      target_year: 2026, target_week: 53, target_index: 2965, horizon: 1, forecast_kg: 1234.5, range_low_kg: 1000, range_high_kg: 1500, area_m2: 11627,
+      total_stems: 80136, measured_stems: 56, harvest_window: 0.5714, params: '{}', evidence: '{}', ...over };
+    const cols = Object.keys(r);
+    return db.query(`insert into forecast_lab_snapshots (${cols.join(',')}) values (${cols.map((_, i) => `$${i + 1}`).join(',')}) on conflict on constraint forecast_lab_snapshots_natural_key do nothing returning id`, Object.values(r));
+  };
+  assert('W53 target snapshot stored', (await snap()).rows.length, 1);
+  assert('same forecast issued again → ignored, not rewritten', (await snap({ forecast_kg: 9999 })).rows.length, 0);
+  assert('stored value is the original', Number((await db.query<{ k: string }>(`select forecast_kg k from forecast_lab_snapshots`)).rows[0].k), 1234.5);
+  await rejects('UPDATE of a snapshot rejected', db.query(`update forecast_lab_snapshots set forecast_kg = 1`));
+  await rejects('DELETE of a snapshot rejected', db.query(`delete from forecast_lab_snapshots`));
+  await rejects('TRUNCATE of snapshots rejected', db.query(`truncate forecast_lab_snapshots`));
+  await rejects('target must equal as-of + horizon', snap({ target_index: 2970 }));
+  await rejects('range low above high rejected', snap({ as_of_index: 2963, target_index: 2964, target_week: 52, as_of_week: 51, range_low_kg: 2000 }));
+  await rejects('unknown model id rejected', snap({ model_id: 'magic', as_of_index: 2960, target_index: 2961, as_of_week: 48, target_week: 49 }));
+  await rejects('2025-W53 target rejected', snap({ target_year: 2025, as_of_index: 2959, target_index: 2960, as_of_week: 47, target_week: 53 }));
+  const rls2 = await db.query<{ relname: string; relrowsecurity: boolean }>(`select relname, relrowsecurity from pg_class where relname in ('forecast_lab_runs','forecast_lab_snapshots','forecast_lab_exclusions','variety_config_history') order by relname`);
+  assert('row-level security on all Forecast Lab tables', rls2.rows.every((r) => r.relrowsecurity) && rls2.rows.length === 4, true);
+
   console.log(`\n${pass} passed, ${fail} failed`);
   process.exit(fail > 0 ? 1 : 0);
 })().catch((e) => { console.error(e); process.exit(1); });
