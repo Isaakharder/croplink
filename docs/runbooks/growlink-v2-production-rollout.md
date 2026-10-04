@@ -7,7 +7,7 @@ Code state (2026-10-04): GrowLink `main` = `0a552a9`, CropLink `main` = `747eafa
 - CropLink's `/api/growlink/yield-weeks/sync-internal` exists but needs `INTERNAL_OPS_KEY` and `GROWLINK_CROPLINK_KEY`, and is never called automatically.
 - The experimental D/IC forecast is not on CropLink `main`.
 
-**Nothing below has been run. Every step requires approval.** Run each migration in the Supabase SQL editor of the named project. Preflight blocks are read-only (`begin transaction read only … rollback`).
+**Progress (2026-10-04):** GrowLink 0140, 0141 and 0142 applied and verified in production; CropLink Test Connection passes (8 varieties). Everything from step 3 on is pending. **Every step requires approval.** Run each migration in the Supabase SQL editor of the named project. Preflight blocks are read-only (`begin transaction read only … rollback`).
 
 ## Order
 
@@ -15,20 +15,24 @@ Code state (2026-10-04): GrowLink `main` = `0a552a9`, CropLink `main` = `747eafa
 |---|---|---|---|
 | 1 | GrowLink DB | Preflight 0140 → apply `0140_rls_fix_integration_keys.sql` → verify | Preflight A clean |
 | 2 | GrowLink DB | Preflight 0141 → apply `0141_croplink_v2_yield_detail.sql` → verify | Preflight B clean |
+| 2b | GrowLink DB | Apply `0142_revoke_v2_tables_from_api_roles.sql` → verify | Step 2 verified |
 | 3 | GrowLink Railway (server) | Set `YIELD_WRITE_SOURCE_TRACKING=enabled` → redeploy → verify one write | Step 2 verified |
 | 4 | GrowLink admin | Issue a scoped CropLink key | Step 2 verified |
 | 5 | CropLink DB | Preflight → apply `20261004000000_iso_week_53.sql` → verify (**before 2026-12-28**) | Preflight C clean |
 | 6 | CropLink DB | Preflight → apply `20261005000000_growlink_yield_weeks.sql` → verify | Step 5 verified |
 | 7 | CropLink Railway (server) | Set `GROWLINK_CROPLINK_KEY` (+ optional `GROWLINK_BASE_URL`) → redeploy | Steps 4 and 6 |
 | 8 | CropLink | First sync (`mode: incremental`), review the run; reconciliation runs later | Separate approval |
+| 9 | CropLink DB | Preflight → apply `20261006000000_forecast_lab.sql` (E) → verify | Step 5 verified |
+| 10 | CropLink DB | Preflight → apply `20261007000000_afw_forecasts.sql` (E2) → verify | Step 5 verified |
+| 11 | CropLink | Deploy `feature/forecast-lab` (Forecast Lab + AFW Forecast editor) → first cycle (F) → cron | Steps 8–10 verified |
 
 Steps 5 and 6 don't depend on 1–4 and can run in either half. Step 7 must come after both 4 and 6.
 
 ---
 
-## A. GrowLink 0140 — close anonymous access to `organization_integration_keys`
+## A. GrowLink 0140 — close anonymous access to `organization_integration_keys` — APPLIED 2026-10-04
 
-Affected: policies `organization_integration_keys_{select,insert,update,delete}` (dropped); `anon` and `authenticated` grants (revoked); RLS stays on; `service_role` untouched.
+The file was revised (`fd1b16c`) after the production preflight showed a different live state than 0072 implies: the four `to public` policies existed, but `anon`/`authenticated` held only `REFERENCES`/`TRIGGER`/`TRUNCATE`, and `organization_upload_keys` had RLS with no policies. The applied version drops the four policies, revokes **all** privileges from `anon`, `authenticated` and `PUBLIC` on **both** key tables, grants `service_role` exactly `SELECT/INSERT/UPDATE/DELETE`, and aborts unless that end state holds. The live pre-state and the exact rollback are in the file header/footer; the preflight and rollback below are kept as the original plan.
 
 Preflight (read-only):
 
@@ -69,7 +73,13 @@ create policy organization_integration_keys_delete on public.organization_integr
 commit;
 ```
 
-## B. GrowLink 0141 — CropLink v2 schema
+## A2. GrowLink 0142 — revoke API-role privileges on the 0141 tables — APPLIED 2026-10-04
+
+0141's three new tables received the project's default grants (`anon`/`authenticated`: `REFERENCES`, `TRIGGER`, `TRUNCATE` — 18 rows in the verification). RLS does not govern those. `0142_revoke_v2_tables_from_api_roles.sql` (`b4060c2`) revokes all privileges from `anon`, `authenticated` and `PUBLIC`, keeps `service_role` `SELECT/INSERT/UPDATE/DELETE` plus the revisions sequence, and aborts unless that end state holds. Verified: no API-role privileges on the three tables or the key tables, `service_role` 12/12, `yield_entries` 226 rows unchanged.
+
+Rollback: `begin; grant references, trigger, truncate on table public.integration_deletions, public.integration_manifests, public.yield_entry_revisions to anon, authenticated; commit;`
+
+## B. GrowLink 0141 — CropLink v2 schema — APPLIED 2026-10-04
 
 Affected:
 
@@ -209,13 +219,19 @@ commit;
 
 ## D. CropLink `20261005000000_growlink_yield_weeks.sql`
 
-Affected: four new tables (`growlink_yield_weeks`, `growlink_yield_week_revisions`, `growlink_sync_runs`, `growlink_sync_state`), RLS on and no policies. No existing table changes.
+Affected: four new tables (`growlink_yield_weeks`, `growlink_yield_week_revisions`, `growlink_sync_runs`, `growlink_sync_state`), RLS on and no policies. All privileges are revoked from `anon`, `authenticated` and `PUBLIC` (new tables pick up default grants, and RLS does not cover `TRUNCATE`). No existing table changes.
 
 Preflight: `select to_regclass('public.growlink_yield_weeks'), to_regclass('public.growlink_yield_week_revisions'), to_regclass('public.growlink_sync_runs'), to_regclass('public.growlink_sync_state'), to_regprocedure('public.iso_weeks_in_year(integer)');`. Expect four nulls and a non-null function (from step 5).
 
 Apply: run the file inside `begin; … commit;`.
 
-Verify: rerun the preflight; expect four non-null tables.
+Verify: rerun the preflight; expect four non-null tables. Then the API-role check (expect 0 rows):
+
+```sql
+select t, r, p from unnest(array['growlink_yield_weeks','growlink_yield_week_revisions','growlink_sync_runs','growlink_sync_state']) t,
+  unnest(array['anon','authenticated']) r, unnest(array['SELECT','INSERT','UPDATE','DELETE','TRUNCATE','REFERENCES','TRIGGER']) p
+ where has_table_privilege(r, 'public.' || t, p);
+```
 
 Rollback (export first if a sync has run): `begin; drop table public.growlink_yield_week_revisions, public.growlink_sync_runs, public.growlink_sync_state, public.growlink_yield_weeks; commit;`
 
@@ -241,7 +257,7 @@ Before step 4 the admin route returns 400 for a request with scopes. That's expe
 
 ## E. CropLink `20261006000000_forecast_lab.sql` (Forecast Lab)
 
-Affected: four new tables (`forecast_lab_runs`, `forecast_lab_snapshots`, `forecast_lab_exclusions`, `variety_config_history`), RLS on and no policies. Two new functions: `forecast_lab_snapshots_immutable`, `varieties_config_audit`. Triggers:
+Affected: four new tables (`forecast_lab_runs`, `forecast_lab_snapshots`, `forecast_lab_exclusions`, `variety_config_history`), RLS on and no policies, all privileges revoked from `anon`, `authenticated` and `PUBLIC`. Two new functions: `forecast_lab_snapshots_immutable`, `varieties_config_audit`. Triggers:
 - `forecast_lab_snapshots_no_update_delete` and `forecast_lab_snapshots_no_truncate` (snapshots can never be changed).
 - `varieties_config_audit_trg`: after insert/update on `varieties`, records changes to scaling fields.
 
@@ -264,7 +280,7 @@ select count(*) * 8 as baseline_rows from public.varieties;
 rollback;
 ```
 
-Apply inside `begin; … commit;`. Verify: E1 returns four non-null tables, and `select count(*) from variety_config_history` equals E4.
+Apply inside `begin; … commit;`. Verify: E1 returns four non-null tables, `select count(*) from variety_config_history` equals E4, and the API-role check from D (with these four table names) returns 0 rows.
 
 Rollback (snapshots are immutable by trigger, but dropping the table is allowed; export first if any cycle has run):
 
@@ -277,6 +293,26 @@ drop function if exists public.forecast_lab_snapshots_immutable();
 drop table if exists public.forecast_lab_exclusions, public.forecast_lab_runs, public.variety_config_history;
 commit;
 ```
+
+## E2. CropLink `20261007000000_afw_forecasts.sql` (grower AFW forecasts)
+
+Affected: one new append-only table `afw_forecast_entries` (variety, ISO year/week, `set` with grams 20–1000 or `clear`, `entered_at`), RLS on and no policies, all privileges revoked from `anon`, `authenticated` and `PUBLIC`; `service_role` gets `SELECT, INSERT` and the id sequence. One new function `afw_forecast_entries_immutable` with triggers rejecting UPDATE, DELETE and TRUNCATE. No existing table changes: `harvest_afw_by_week` (legacy AFW) and GrowLink data are untouched. Depends on step 5 (`iso_weeks_in_year`).
+
+Preflight (read-only):
+
+```sql
+begin transaction read only;
+select to_regclass('public.afw_forecast_entries') as must_be_null,
+       to_regprocedure('public.afw_forecast_entries_immutable()') as must_be_null_too,
+       to_regprocedure('public.iso_weeks_in_year(integer)') as must_be_set;
+rollback;
+```
+
+Apply inside `begin; … commit;`. Verify: the table exists with `relrowsecurity = true`, 0 policies, 0 rows; the API-role check from D (with `afw_forecast_entries`) returns 0 rows; `has_table_privilege('service_role', 'public.afw_forecast_entries', 'INSERT')` is true.
+
+Rollback (export first if growers have entered forecasts): `begin; drop table public.afw_forecast_entries; drop function public.afw_forecast_entries_immutable(); commit;`
+
+Until E2 is applied the editor shows "AFW forecasts are not enabled yet" and the Lab runs exactly as before.
 
 ## F. Forecast Lab cycle (after E and step 7)
 
