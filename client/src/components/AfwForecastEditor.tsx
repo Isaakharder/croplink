@@ -10,6 +10,11 @@ import { initDraft, validateDraft, changedWeeks, isDirty, buildChanges, fillForw
 
 const UNSAVED = 'You have unsaved AFW forecast changes. Leave without saving?';
 
+// The editor passcode lives only in this tab's sessionStorage (gone when the tab closes); never in code, logs or localStorage.
+const PASS_KEY = 'croplink.afwEditorPasscode';
+const readPass = () => { try { return sessionStorage.getItem(PASS_KEY) ?? ''; } catch { return ''; } };
+const writePass = (v: string) => { try { if (v) sessionStorage.setItem(PASS_KEY, v); else sessionStorage.removeItem(PASS_KEY); } catch { /* storage unavailable: passcode is asked again next save */ } };
+
 /** Warn before losing unsaved edits: tab close/reload, and in-app link clicks (BrowserRouter has no navigation blocker). */
 function useUnsavedChangesWarning(dirty: boolean) {
   useEffect(() => {
@@ -43,6 +48,8 @@ export function AfwForecastEditor({ varietyId, year, onDirtyChange }: { varietyI
   const [lab, setLab] = useState<ForecastLabView | null>(null);
   const [labError, setLabError] = useState('');
   const [labLoading, setLabLoading] = useState(false);
+  const [passcode, setPasscode] = useState(readPass);
+  const [passStored, setPassStored] = useState(() => readPass() !== '');
 
   const loadLab = useCallback(() => {
     setLabLoading(true);
@@ -75,18 +82,24 @@ export function AfwForecastEditor({ varietyId, year, onDirtyChange }: { varietyI
   const hasErrors = Object.keys(validation.errors).length > 0;
 
   async function save() {
-    if (!model || hasErrors || !dirty) return;
+    if (!model || hasErrors || !dirty || !passcode) return;
     setSaving(true);
     setSaveError('');
     setServerErrors({});
     setSavedMsg('');
     try {
-      const r = await afwForecastsApi.save(varietyId, model.latestEntryId, buildChanges(draft, weeks));
+      const r = await afwForecastsApi.save(varietyId, model.latestEntryId, buildChanges(draft, weeks), passcode);
+      if (!r.ok && r.status === 401) {
+        writePass(''); setPassStored(false); setPasscode('');
+        setSaveError('Editor passcode is missing or incorrect. Nothing was saved.');
+        return;
+      }
       if (!r.ok) {
         setSaveError(r.error);
         setServerErrors(Object.fromEntries(r.errors.map((e) => [`${e.year}-W${String(e.week).padStart(2, '0')}`, e.reason])));
         return;
       }
+      writePass(passcode); setPassStored(true);
       setModel(r.model);
       setDraft(initDraft(r.model.weeks));
       setNotices(r.model.notices ?? []);
@@ -192,7 +205,21 @@ export function AfwForecastEditor({ varietyId, year, onDirtyChange }: { varietyI
       </div>
 
       <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 10, flexWrap: 'wrap' }}>
-        <button type="button" className="btn btn-primary" disabled={!dirty || hasErrors || saving} onClick={save}>{saving ? 'Saving…' : 'Save AFW forecast'}</button>
+        {!passStored ? (
+          <input
+            type="password"
+            className="form-control"
+            style={{ width: 170 }}
+            autoComplete="current-password"
+            aria-label="Editor passcode"
+            placeholder="Editor passcode"
+            value={passcode}
+            onChange={(e) => setPasscode(e.target.value)}
+          />
+        ) : (
+          <button type="button" className="btn btn-sm" title="Remove the passcode from this browser tab" onClick={() => { writePass(''); setPassStored(false); setPasscode(''); }}>Forget passcode</button>
+        )}
+        <button type="button" className="btn btn-primary" disabled={!dirty || hasErrors || saving || !passcode} onClick={save}>{saving ? 'Saving…' : 'Save AFW forecast'}</button>
         <button type="button" className="btn" disabled={!dirty || saving} onClick={discard}>Discard changes</button>
         {dirty && <span style={{ fontSize: 12, color: 'var(--yellow-700, #a16207)' }}>Unsaved changes ({changed.size} week{changed.size === 1 ? '' : 's'})</span>}
         {hasErrors && <span style={{ fontSize: 12, color: 'var(--red-600, #dc2626)' }}>Fix the highlighted weeks to save</span>}
@@ -210,6 +237,7 @@ export function AfwForecastEditor({ varietyId, year, onDirtyChange }: { varietyI
             As of {lab.asOf.label}. Legacy is the current Projections-page forecast (it uses its own AFW series, not these forecasts) — kept for comparison.
             {!lab.freshness.snapshotsEnabled && ' Forecasts are computed live and not yet locked.'}
           </div>
+          {lab.warnings.map((w) => <div key={w} className="warning-banner">⚠ {w}</div>)}
           <div style={{ overflowX: 'auto' }}>
             <table className="calc-table">
               <thead>
