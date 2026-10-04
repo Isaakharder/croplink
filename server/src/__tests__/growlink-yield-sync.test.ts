@@ -166,8 +166,8 @@ const setup = () => {
     assert('payload hash ignores key order', payloadSha256(reordered), payloadSha256(it));
     assert('payload hash ignores settlement', payloadSha256({ ...it, settlement: { status: 'settled', settledAt: '2026-08-04T04:00:00Z', reason: 'x' } }), payloadSha256(it));
     const afw = deriveWeeklyAfw(it);
-    assertClose('AFW is kg-weighted over daily rows when the breakdown is complete', afw.afwG!, (400 * 200 + 607 * 230) / 1007);
-    assert('…with method and version recorded', [afw.method, afw.version], ['daily-kg-weighted', 'afw-v1']);
+    assertClose('AFW combines daily rows as total grams / total fruit when the breakdown is complete', afw.afwG!, (1007 * 1000) / (400_000 / 200 + 607_000 / 230));
+    assert('…with method and version recorded', [afw.method, afw.version], ['daily-fruit-weighted', 'afw-v1']);
     assert('falls back to entry-level AFW after a manual edit', deriveWeeklyAfw({ ...it, dailyBreakdownComplete: false }).method, 'entry-level');
     assert('unavailable when nothing is recorded', deriveWeeklyAfw({ ...it, averageFruitWeightG: null, daily: [] }).afwG, null);
   }

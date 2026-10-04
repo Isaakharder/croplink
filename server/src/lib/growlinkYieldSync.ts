@@ -440,21 +440,22 @@ export function planMissingReconciliation(
 
 export interface DerivedAfw {
   afwG: number | null;
-  method: 'daily-kg-weighted' | 'entry-level' | 'unavailable';
+  method: 'daily-fruit-weighted' | 'entry-level' | 'unavailable';
   version: typeof AFW_DERIVATION_VERSION;
 }
 
 /**
- * Weekly AFW from raw values. Prefers the kg-weighted mean of daily packing
- * rows when the breakdown is known complete and covers the weekly total
- * (GrowLink's merge path overwrites the entry-level AFW with the latest
- * day's value, so the entry-level figure can be unweighted).
+ * Weekly AFW from raw values. AFW is grams per fruit, so daily rows combine
+ * as total grams over total fruit (Σkg / Σ(kg/AFW)) — the same rule GrowLink
+ * uses when appending kg. Daily rows are preferred when the breakdown is
+ * known complete and covers the weekly total; otherwise the entry-level AFW.
  */
 export function deriveWeeklyAfw(item: Pick<V2YieldWeekItem, 'totalKg' | 'averageFruitWeightG' | 'daily' | 'dailyBreakdownComplete'>): DerivedAfw {
   const days = item.daily.filter((d) => (d.totalKg ?? 0) > 0 && (d.averageFruitWeightG ?? 0) > 0);
   const dayKg = days.reduce((s, d) => s + (d.totalKg as number), 0);
   if (item.dailyBreakdownComplete === true && days.length > 0 && item.totalKg != null && item.totalKg > 0 && Math.abs(dayKg - item.totalKg) <= 0.01 * item.totalKg) {
-    return { afwG: days.reduce((s, d) => s + (d.totalKg as number) * (d.averageFruitWeightG as number), 0) / dayKg, method: 'daily-kg-weighted', version: AFW_DERIVATION_VERSION };
+    const fruit = days.reduce((s, d) => s + ((d.totalKg as number) * 1000) / (d.averageFruitWeightG as number), 0);
+    return { afwG: (dayKg * 1000) / fruit, method: 'daily-fruit-weighted', version: AFW_DERIVATION_VERSION };
   }
   if (item.averageFruitWeightG != null && item.averageFruitWeightG > 0) return { afwG: item.averageFruitWeightG, method: 'entry-level', version: AFW_DERIVATION_VERSION };
   return { afwG: null, method: 'unavailable', version: AFW_DERIVATION_VERSION };
