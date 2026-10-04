@@ -76,6 +76,19 @@ export function buildWeeklyComparison(
     actualByWeek.set(a.week_number, (actualByWeek.get(a.week_number) ?? 0) + Number(a.kg));
   }
 
+  return compareProjectedToActualByWeek(projectedByWeek, actualByWeek);
+}
+
+/**
+ * The join + difference math behind buildWeeklyComparison, for callers that
+ * have already resolved actual kg per week themselves (e.g. the Dashboard's
+ * GrowLink-first / manual-fallback resolution). Weeks absent from
+ * `actualByWeek` are "no actual," never 0 kg.
+ */
+export function compareProjectedToActualByWeek(
+  projectedByWeek: { week: number; projectedKg: number }[],
+  actualByWeek: Map<number, number>
+): WeeklyComparisonRow[] {
   const projectedByWeekNum = new Map(projectedByWeek.map((w) => [w.week, w.projectedKg]));
   const weeks = Array.from(new Set([...projectedByWeekNum.keys(), ...actualByWeek.keys()])).sort((a, b) => a - b);
 

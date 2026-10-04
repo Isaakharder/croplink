@@ -1,17 +1,45 @@
-import { useState, useEffect } from 'react';
-import { Season, Variety, HarvestedEntry, ProjectionResult } from '../types';
-import { seasonsApi, varietiesApi, harvestedApi, projectionApi } from '../services/api';
+import { useState, useEffect, useMemo } from 'react';
+import { Season, Variety, HarvestedEntry, HarvestProjectionVariety, GrowlinkHarvestActual } from '../types';
+import { seasonsApi, varietiesApi, harvestedApi, harvestProjectionsApi, growlinkHarvestActualsApi } from '../services/api';
+import { resolveWeeklyActuals, sumActualKg, buildDashboardComparison, type ActualSource } from '../utils/dashboardHarvest';
+
+function errorMessage(e: unknown): string {
+  return e instanceof Error ? e.message : String(e);
+}
+
+function fmtKg(v: number): string {
+  return v.toLocaleString(undefined, { minimumFractionDigits: 1, maximumFractionDigits: 1 });
+}
+
+function fmtSignedKg(v: number | null): string {
+  if (v == null) return '—';
+  return `${v >= 0 ? '+' : ''}${fmtKg(v)}`;
+}
+
+function fmtSignedPct(v: number | null): string {
+  if (v == null) return '—';
+  return `${v >= 0 ? '+' : ''}${v.toFixed(1)}%`;
+}
+
+const SOURCE_LABEL: Record<ActualSource, string> = {
+  growlink: 'GrowLink',
+  'manual-fallback': 'Manual (no GrowLink row)',
+};
 
 export function DashboardPage() {
   const [seasons, setSeasons] = useState<Season[]>([]);
   const [varieties, setVarieties] = useState<Variety[]>([]);
   const [activeSeason, setActiveSeason] = useState<Season | null>(null);
-  const [projections, setProjections] = useState<Map<string, ProjectionResult>>(new Map());
-  const [harvested, setHarvested] = useState<Map<string, HarvestedEntry[]>>(new Map());
+  const [projections, setProjections] = useState<Map<string, HarvestProjectionVariety>>(new Map());
+  // null = the GrowLink fetch failed — actuals are then unknown, never 0.
+  const [growlinkActuals, setGrowlinkActuals] = useState<GrowlinkHarvestActual[] | null>([]);
+  const [manualEntries, setManualEntries] = useState<HarvestedEntry[]>([]);
+  const [errors, setErrors] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     async function load() {
+      const failures: string[] = [];
       try {
         const [sData, vData] = await Promise.all([seasonsApi.list(), varietiesApi.list()]);
         setSeasons(sData);
@@ -23,37 +51,46 @@ export function DashboardPage() {
 
         const seasonVarieties = vData.filter(v => sData.find(s => s.id === v.season_id)?.year === season.year && v.is_active);
 
-        // Load projections and harvested for active varieties
-        const [projResults, harvResults] = await Promise.all([
-          Promise.all(
-            seasonVarieties.map(v =>
-              projectionApi.get(v.id, season.year)
-                .then(p => ({ id: v.id, proj: p }))
-                .catch(() => null)
-            )
+        // Projected kg comes from /harvest-projections — the same server-side
+        // fruit/m² × area × harvest-week AFW calculation the Projections page uses.
+        const [projResults, growlinkResult, manualResults] = await Promise.all([
+          Promise.allSettled(seasonVarieties.map(v => harvestProjectionsApi.get(season.year, v.id))),
+          growlinkHarvestActualsApi.list({ year: season.year, matched: true }).then(
+            rows => ({ ok: true as const, rows }),
+            (e: unknown) => ({ ok: false as const, error: e })
           ),
-          Promise.all(
-            seasonVarieties.map(v =>
-              harvestedApi.list(v.id, season.year)
-                .then(h => ({ id: v.id, entries: h }))
-                .catch(() => null)
-            )
-          ),
+          Promise.allSettled(seasonVarieties.map(v => harvestedApi.list(v.id, season.year))),
         ]);
 
-        const projMap = new Map<string, ProjectionResult>();
-        for (const r of projResults) {
-          if (r) projMap.set(r.id, r.proj);
-        }
-
-        const harvMap = new Map<string, HarvestedEntry[]>();
-        for (const r of harvResults) {
-          if (r) harvMap.set(r.id, r.entries);
-        }
-
+        const projMap = new Map<string, HarvestProjectionVariety>();
+        projResults.forEach((r, i) => {
+          const v = seasonVarieties[i];
+          if (r.status === 'rejected') {
+            failures.push(`Projection for ${v.name} failed to load: ${errorMessage(r.reason)}`);
+            return;
+          }
+          const proj = r.value.varieties.find(p => p.id === v.id);
+          if (proj) projMap.set(v.id, proj);
+        });
         setProjections(projMap);
-        setHarvested(harvMap);
+
+        if (growlinkResult.ok) {
+          setGrowlinkActuals(growlinkResult.rows);
+        } else {
+          setGrowlinkActuals(null);
+          failures.push(`GrowLink harvest actuals failed to load: ${errorMessage(growlinkResult.error)}`);
+        }
+
+        const manual: HarvestedEntry[] = [];
+        manualResults.forEach((r, i) => {
+          if (r.status === 'fulfilled') manual.push(...r.value);
+          else failures.push(`Manual harvested entries for ${seasonVarieties[i].name} failed to load (manual fallback unavailable): ${errorMessage(r.reason)}`);
+        });
+        setManualEntries(manual);
+      } catch (e) {
+        failures.push(`Dashboard failed to load: ${errorMessage(e)}`);
       } finally {
+        setErrors(failures);
         setLoading(false);
       }
     }
@@ -61,27 +98,55 @@ export function DashboardPage() {
   }, []);
 
   const activeVarieties = varieties.filter(v => v.is_active && seasons.find(s => s.id === v.season_id)?.year === activeSeason?.year);
+  const actualsAvailable = growlinkActuals != null;
 
-  const totalProjected = [...projections.values()].reduce((s, p) => s + p.total_projected, 0);
-  const totalHarvestedKg = [...harvested.values()].flatMap(e => e).reduce((s, e) => s + Number(e.kg), 0);
+  // GrowLink-first, manual-fallback per variety/week. Not resolved at all
+  // when GrowLink failed: manual rows would otherwise stand in for weeks
+  // GrowLink actually covers.
+  const resolvedActuals = useMemo(() => {
+    if (!activeSeason || growlinkActuals == null) return [];
+    const ids = new Set(varieties.filter(v => v.is_active && seasons.find(s => s.id === v.season_id)?.year === activeSeason.year).map(v => v.id));
+    return resolveWeeklyActuals(growlinkActuals, manualEntries, activeSeason.year, ids);
+  }, [activeSeason, seasons, varieties, growlinkActuals, manualEntries]);
 
-  // Aggregate projection by week across varieties
-  const projByWeek: Record<number, number> = {};
-  for (const proj of projections.values()) {
-    for (const w of proj.weeks) {
-      projByWeek[w.week] = (projByWeek[w.week] ?? 0) + w.projected_fruit_per_m2;
-    }
+  const comparison = useMemo(
+    () => buildDashboardComparison([...projections.values()], resolvedActuals),
+    [projections, resolvedActuals]
+  );
+
+  useEffect(() => {
+    if (resolvedActuals.length === 0) return;
+    if (!new URLSearchParams(window.location.search).has('debug')) return;
+    const nameById = new Map(varieties.map(v => [v.id, v.name]));
+    console.debug('[Dashboard] resolved harvest actuals (variety/week → source)');
+    console.table(resolvedActuals.map(r => ({ variety: nameById.get(r.varietyId) ?? r.varietyId, week: r.week, kg: r.kg, source: r.source, rows: r.rowCount })));
+  }, [resolvedActuals, varieties]);
+
+  const totalProjectedKg = [...projections.values()].reduce((s, p) => s + p.totalKg, 0);
+  const totalProjectedFruit = [...projections.values()].reduce((s, p) => s + p.weeks.reduce((ws, w) => ws + w.projectedFruitPerM2, 0), 0);
+  const peakProjWeek = comparison
+    .filter(r => r.projectedKg != null && r.projectedKg > 0)
+    .sort((a, b) => (b.projectedKg as number) - (a.projectedKg as number))[0];
+  const totalActualKg = sumActualKg(resolvedActuals);
+  const actualWeeks = resolvedActuals.filter(r => r.kg != null).map(r => r.week);
+  const manualFallbackWeeks = new Set(resolvedActuals.filter(r => r.source === 'manual-fallback').map(r => r.week)).size;
+
+  function totalHarvestedLabel(): string {
+    if (!actualsAvailable) return 'Unavailable';
+    return totalActualKg == null ? 'No actuals' : `${fmtKg(totalActualKg)} kg`;
   }
 
-  // Aggregate harvested kg by week across varieties
-  const harvByWeek: Record<number, number> = {};
-  for (const entries of harvested.values()) {
-    for (const e of entries) {
-      harvByWeek[e.week_number] = (harvByWeek[e.week_number] ?? 0) + Number(e.kg);
-    }
+  function totalHarvestedSub(): string | null {
+    if (!actualsAvailable || totalActualKg == null) return null;
+    const range = `W${Math.min(...actualWeeks)}–W${Math.max(...actualWeeks)}`;
+    return manualFallbackWeeks > 0 ? `${range} · GrowLink + ${manualFallbackWeeks} manual-fallback wk` : `${range} · GrowLink`;
   }
 
-  const peakProjWeek = Object.entries(projByWeek).sort((a, b) => b[1] - a[1])[0];
+  function varietyActualKg(varietyId: string): string {
+    if (!actualsAvailable) return 'Unavailable';
+    const kg = sumActualKg(resolvedActuals.filter(r => r.varietyId === varietyId));
+    return kg == null ? '—' : fmtKg(kg);
+  }
 
   if (loading) return <div className="loading">Loading dashboard…</div>;
 
@@ -95,6 +160,8 @@ export function DashboardPage() {
       </div>
 
       <div className="page-body">
+        {errors.map(msg => <div key={msg} className="error-banner">{msg}</div>)}
+
         {!activeSeason ? (
           <div className="empty-state">
             <p>No year found.</p>
@@ -113,15 +180,19 @@ export function DashboardPage() {
                 <div className="stat-value">{activeVarieties.length}</div>
               </div>
               <div className="stat-card">
-                <div className="stat-label">Total Projected Fruit / m²</div>
-                <div className="stat-value">{totalProjected.toFixed(1)}</div>
-                {peakProjWeek && (
-                  <div className="stat-sub">Peak: Wk {peakProjWeek[0]} @ {Number(peakProjWeek[1]).toFixed(2)}/m²</div>
+                <div className="stat-label">Total Projected</div>
+                <div className="stat-value">{projections.size > 0 ? `${fmtKg(totalProjectedKg)} kg` : '—'}</div>
+                {projections.size > 0 && (
+                  <div className="stat-sub">
+                    {totalProjectedFruit.toFixed(1)} fruit/m²
+                    {peakProjWeek && <> · Peak: Wk {peakProjWeek.week} @ {fmtKg(peakProjWeek.projectedKg as number)} kg</>}
+                  </div>
                 )}
               </div>
               <div className="stat-card">
                 <div className="stat-label">Total Harvested</div>
-                <div className="stat-value">{totalHarvestedKg.toFixed(1)} kg</div>
+                <div className="stat-value">{totalHarvestedLabel()}</div>
+                {totalHarvestedSub() && <div className="stat-sub">{totalHarvestedSub()}</div>}
               </div>
             </div>
 
@@ -140,23 +211,24 @@ export function DashboardPage() {
                           <th>Color</th>
                           <th>Area m²</th>
                           <th>Stems</th>
-                          <th>Total Proj.</th>
+                          <th>Proj. fruit/m²</th>
+                          <th>Proj. kg</th>
                           <th>Harvested kg</th>
                         </tr>
                       </thead>
                       <tbody>
                         {activeVarieties.map(v => {
                           const proj = projections.get(v.id);
-                          const harvEntries = harvested.get(v.id) ?? [];
-                          const harvKg = harvEntries.reduce((s, e) => s + Number(e.kg), 0);
+                          const fruit = proj?.weeks.reduce((s, w) => s + w.projectedFruitPerM2, 0);
                           return (
                             <tr key={v.id}>
                               <td style={{ fontWeight: 600 }}>{v.name}</td>
                               <td>{v.color ?? '—'}</td>
                               <td>{v.area_m2 ?? '—'}</td>
                               <td>{v.total_stem_count ?? '—'}</td>
-                              <td>{proj ? proj.total_projected.toFixed(2) : '—'}</td>
-                              <td>{harvKg > 0 ? harvKg.toFixed(1) : '—'}</td>
+                              <td>{proj ? fruit!.toFixed(2) : '—'}</td>
+                              <td>{proj ? fmtKg(proj.totalKg) : '—'}</td>
+                              <td>{varietyActualKg(v.id)}</td>
                             </tr>
                           );
                         })}
@@ -166,31 +238,46 @@ export function DashboardPage() {
                 )}
               </div>
 
-              {/* Projected vs Actual */}
+              {/* Projected vs Actual — kg on both sides */}
               <div className="card">
-                <div className="card-title">Projected vs Actual by Week</div>
-                {Object.keys(projByWeek).length === 0 && Object.keys(harvByWeek).length === 0 ? (
-                  <div className="empty-state" style={{ padding: 20 }}>No data yet. Enter fruit development data in Calculator.</div>
+                <div className="card-title">Projected vs Actual by Week (kg)</div>
+                {comparison.some(r => r.missingAfw) && (
+                  <div className="warning-banner">
+                    Weeks marked * have projected fruit but no known AFW, so projected kg is incomplete and no variance is shown — enter Actual harvested AFW/g in the Calculator.
+                  </div>
+                )}
+                {comparison.length === 0 ? (
+                  <div className="empty-state" style={{ padding: 20 }}>
+                    {actualsAvailable ? 'No data yet. Enter fruit development data in Calculator.' : 'No projections, and actuals are unavailable.'}
+                  </div>
                 ) : (
                   <div className="table-wrap" style={{ maxHeight: 360, overflowY: 'auto' }}>
                     <table>
                       <thead>
                         <tr>
                           <th>Week</th>
-                          <th>Proj. Fruit/m²</th>
+                          <th>Proj. kg</th>
                           <th>Actual kg</th>
+                          <th>Variance kg</th>
+                          <th>Variance %</th>
                         </tr>
                       </thead>
                       <tbody>
-                        {Array.from({ length: 52 }, (_, i) => i + 1)
-                          .filter(w => projByWeek[w] > 0 || harvByWeek[w] > 0)
-                          .map(w => (
-                            <tr key={w}>
-                              <td>Week {w}</td>
-                              <td>{projByWeek[w] ? projByWeek[w].toFixed(3) : '—'}</td>
-                              <td>{harvByWeek[w] ? harvByWeek[w].toFixed(1) + ' kg' : '—'}</td>
-                            </tr>
-                          ))}
+                        {comparison.map(r => (
+                          <tr key={r.week}>
+                            <td>Week {r.week}</td>
+                            <td>
+                              {r.projectedKg == null ? '—' : fmtKg(r.projectedKg)}
+                              {r.missingAfw && '*'}
+                            </td>
+                            <td title={r.sources.length ? `Source: ${r.sources.map(s => SOURCE_LABEL[s]).join(' + ')}` : undefined}>
+                              {!actualsAvailable ? 'Unavailable' : r.actualKg == null ? '—' : fmtKg(r.actualKg)}
+                              {r.sources.includes('manual-fallback') && ' (manual)'}
+                            </td>
+                            <td>{fmtSignedKg(r.varianceKg)}</td>
+                            <td>{fmtSignedPct(r.variancePct)}</td>
+                          </tr>
+                        ))}
                       </tbody>
                     </table>
                   </div>
@@ -216,7 +303,7 @@ export function DashboardPage() {
                 </div>
                 <div>
                   <div style={{ fontSize: 12, color: 'var(--gray-500)', textTransform: 'uppercase', fontWeight: 600 }}>Total Harvested</div>
-                  <div style={{ fontWeight: 600, marginTop: 4 }}>{totalHarvestedKg.toFixed(1)} kg</div>
+                  <div style={{ fontWeight: 600, marginTop: 4 }}>{totalHarvestedLabel()}</div>
                 </div>
               </div>
             </div>
