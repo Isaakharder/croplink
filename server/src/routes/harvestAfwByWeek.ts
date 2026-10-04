@@ -62,8 +62,8 @@ router.post('/upsert-many', async (req: Request, res: Response, next: NextFuncti
 
     const skipped: { week_number: number; reason: string }[] = [];
     const rowsToUpsert = rows.filter((r) => {
-      if (!isValidIsoWeek(r.year, r.week_number)) {
-        skipped.push({ week_number: r.week_number, reason: `Week ${r.week_number} doesn't exist in ${r.year} (valid: 1–${Number.isInteger(r.year) ? weeksInIsoYear(r.year) : 52})` });
+      if (!isValidIsoWeek(Number(r.year), Number(r.week_number))) {
+        skipped.push({ week_number: r.week_number, reason: `Week ${r.week_number} doesn't exist in ${r.year} (valid: 1–${Number.isInteger(Number(r.year)) ? weeksInIsoYear(Number(r.year)) : 52})` });
         return false;
       }
       // A real harvest measurement cannot exist for a week that hasn't
