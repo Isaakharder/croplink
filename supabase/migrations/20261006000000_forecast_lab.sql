@@ -144,3 +144,8 @@ alter table forecast_lab_runs enable row level security;
 alter table forecast_lab_snapshots enable row level security;
 alter table forecast_lab_exclusions enable row level security;
 alter table variety_config_history enable row level security;
+
+-- Server-only: no table privilege for the API roles (TRUNCATE/REFERENCES/
+-- TRIGGER are not governed by RLS, and new tables may receive default grants).
+revoke all on table forecast_lab_runs, forecast_lab_snapshots, forecast_lab_exclusions, variety_config_history from anon, authenticated, public;
+revoke all on sequence forecast_lab_snapshots_id_seq from anon, authenticated, public;

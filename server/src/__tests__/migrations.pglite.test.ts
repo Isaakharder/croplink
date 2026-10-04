@@ -23,6 +23,18 @@ const migration = (f: string) => readFileSync(path.resolve(__dirname, '../../../
 
 (async () => {
   const db = new PGlite();
+  // Supabase's API roles, with the production default grants new tables pick up.
+  await db.exec(`
+    create role anon nologin; create role authenticated nologin; create role service_role nologin bypassrls;
+    alter default privileges in schema public grant all on tables to anon, authenticated, service_role;
+    alter default privileges in schema public grant all on sequences to anon, authenticated, service_role;
+  `);
+  const apiRolePrivileges = async (tables: string[]) => (await db.query<{ p: string }>(`
+    select t || ':' || r || ':' || p as p
+    from unnest($1::text[]) t, unnest(array['anon','authenticated']) r, unnest(array['SELECT','INSERT','UPDATE','DELETE','TRUNCATE','REFERENCES','TRIGGER']) p
+    where has_table_privilege(r, 'public.' || t, p)`, [tables])).rows.map((x) => x.p);
+  await db.exec(`create table _default_grants_control (id int)`);
+  assert('control: a new table without revokes DOES get API-role privileges (so the checks below are meaningful)', (await apiRolePrivileges(['_default_grants_control'])).length, 14);
   // Original 1–52 week checks, as created by 001_initial_schema / later migrations.
   await db.exec(`
     create table weekly_node_statuses (id serial primary key, year integer not null, week_number integer not null check (week_number >= 1 and week_number <= 52));
@@ -75,6 +87,8 @@ const migration = (f: string) => readFileSync(path.resolve(__dirname, '../../../
   const secretCols = await db.query<{ n: number }>(`select count(*)::int n from information_schema.columns where table_name like 'growlink_sync_%' and column_name ~ '(secret|key)$' and column_name <> 'key_fingerprint'`);
   assert('no secret/key columns besides the fingerprint', secretCols.rows[0].n, 0);
 
+  assert('yield-weeks tables: no privilege for anon/authenticated', await apiRolePrivileges(['growlink_yield_weeks', 'growlink_yield_week_revisions', 'growlink_sync_runs', 'growlink_sync_state']), []);
+
   console.log('20261006000000_forecast_lab.sql');
   await db.exec(`create table varieties (id uuid primary key default gen_random_uuid(), name text, area_m2 numeric, plant_count integer, total_stem_count integer,
     average_fruit_weight_grams numeric, is_active boolean not null default true, plant_date date, pull_out_date date, case_kg numeric,
@@ -109,6 +123,31 @@ const migration = (f: string) => readFileSync(path.resolve(__dirname, '../../../
   await rejects('2025-W53 target rejected', snap({ target_year: 2025, as_of_index: 2959, target_index: 2960, as_of_week: 47, target_week: 53 }));
   const rls2 = await db.query<{ relname: string; relrowsecurity: boolean }>(`select relname, relrowsecurity from pg_class where relname in ('forecast_lab_runs','forecast_lab_snapshots','forecast_lab_exclusions','variety_config_history') order by relname`);
   assert('row-level security on all Forecast Lab tables', rls2.rows.every((r) => r.relrowsecurity) && rls2.rows.length === 4, true);
+  assert('Forecast Lab tables: no privilege for anon/authenticated', await apiRolePrivileges(['forecast_lab_runs', 'forecast_lab_snapshots', 'forecast_lab_exclusions', 'variety_config_history']), []);
+  assert('service_role still reads and writes Forecast Lab tables', (await db.query<{ ok: boolean }>(`select has_table_privilege('service_role', 'public.forecast_lab_snapshots', 'INSERT') and has_table_privilege('service_role', 'public.forecast_lab_snapshots', 'SELECT') ok`)).rows[0].ok, true);
+
+  console.log('20261007000000_afw_forecasts.sql');
+  await db.exec(migration('20261007000000_afw_forecasts.sql'));
+  const afw = (over: Record<string, unknown> = {}) => {
+    const r: Record<string, unknown> = { batch_id: '00000000-0000-4000-8000-0000000000c1', variety_id: '00000000-0000-4000-8000-0000000000aa', iso_year: 2026, iso_week: 53, action: 'set', grams: 210.04, ...over };
+    const cols = Object.keys(r);
+    return db.query(`insert into afw_forecast_entries (${cols.join(',')}) values (${cols.map((_, i) => `$${i + 1}`).join(',')}) returning grams`, Object.values(r));
+  };
+  assert('2026-W53 forecast stored, grams kept to 0.1 g', Number(((await afw()).rows[0] as { grams: string }).grams), 210);
+  assert('a clear is stored without grams', (await afw({ action: 'clear', grams: null })).rows.length, 1);
+  await rejects('2025-W53 rejected', afw({ iso_year: 2025 }));
+  await rejects('set without grams rejected', afw({ grams: null }));
+  await rejects('clear with grams rejected', afw({ action: 'clear' }));
+  await rejects('below 20 g rejected', afw({ grams: 10 }));
+  await rejects('above 1000 g rejected', afw({ grams: 1500 }));
+  await rejects('unknown action rejected', afw({ action: 'replace' }));
+  await rejects('UPDATE rejected (append-only)', db.query(`update afw_forecast_entries set grams = 1`));
+  await rejects('DELETE rejected (append-only)', db.query(`delete from afw_forecast_entries`));
+  await rejects('TRUNCATE rejected (append-only)', db.query(`truncate afw_forecast_entries`));
+  assert('AFW forecasts: RLS on, no policies', (await db.query<{ r: boolean; n: number }>(`select relrowsecurity r, (select count(*)::int from pg_policies where tablename = 'afw_forecast_entries') n from pg_class where relname = 'afw_forecast_entries'`)).rows[0], { r: true, n: 0 });
+  assert('AFW forecasts: no privilege for anon/authenticated', await apiRolePrivileges(['afw_forecast_entries']), []);
+  assert('AFW forecasts: service_role can read and append', (await db.query<{ ok: boolean }>(`select has_table_privilege('service_role', 'public.afw_forecast_entries', 'SELECT') and has_table_privilege('service_role', 'public.afw_forecast_entries', 'INSERT') and has_sequence_privilege('service_role', 'public.afw_forecast_entries_id_seq', 'USAGE') ok`)).rows[0].ok, true);
+  assert('existing tables untouched by the new migrations (harvest_afw_by_week keeps its rows)', (await db.query<{ n: number }>(`select count(*)::int n from harvest_afw_by_week`)).rows[0].n, 1);
 
   console.log(`\n${pass} passed, ${fail} failed`);
   process.exit(fail > 0 ? 1 : 0);

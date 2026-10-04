@@ -111,3 +111,8 @@ alter table growlink_yield_weeks enable row level security;
 alter table growlink_yield_week_revisions enable row level security;
 alter table growlink_sync_runs enable row level security;
 alter table growlink_sync_state enable row level security;
+
+-- Server-only: no table privilege for the API roles (TRUNCATE/REFERENCES/
+-- TRIGGER are not governed by RLS, and new tables may receive default grants).
+revoke all on table growlink_yield_weeks, growlink_yield_week_revisions, growlink_sync_runs, growlink_sync_state from anon, authenticated, public;
+revoke all on sequence growlink_yield_week_revisions_id_seq from anon, authenticated, public;
