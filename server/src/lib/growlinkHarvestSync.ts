@@ -150,7 +150,10 @@ export function planHarvestActualsSync(
  */
 export async function writeWithRowFallback(
   rows: Record<string, unknown>[],
-  writeBatch: (rows: Record<string, unknown>[]) => Promise<string | null>
+  writeBatch: (rows: Record<string, unknown>[]) => Promise<string | null>,
+  describe: (row: Record<string, unknown>) => Pick<RejectedRecord, 'harvestId' | 'year' | 'week'> = (row) => ({
+    harvestId: (row.growlink_harvest_key as string) ?? null, year: row.year, week: row.week_number,
+  })
 ): Promise<{ written: number; failed: RejectedRecord[] }> {
   if (rows.length === 0) return { written: 0, failed: [] };
   if ((await writeBatch(rows)) == null) return { written: rows.length, failed: [] };
@@ -160,7 +163,7 @@ export async function writeWithRowFallback(
   for (const row of rows) {
     const err = await writeBatch([row]);
     if (err == null) written++;
-    else failed.push({ harvestId: (row.growlink_harvest_key as string) ?? null, year: row.year, week: row.week_number, stage: 'write', reason: err });
+    else failed.push({ ...describe(row), stage: 'write', reason: err });
   }
   return { written, failed };
 }

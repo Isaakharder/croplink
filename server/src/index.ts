@@ -38,6 +38,8 @@ import varietyZonesRouter from './routes/varietyZones';
 import growlinkVarietyLinksRouter from './routes/growlinkVarietyLinks';
 import growlinkHarvestActualsRouter from './routes/growlinkHarvestActuals';
 import growlinkConnectionRouter from './routes/growlinkConnection';
+import { createGrowlinkYieldWeeksRouter } from './routes/growlinkYieldWeeks';
+import { supabaseYieldWeekRepo } from './lib/growlinkYieldRepo';
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -90,6 +92,7 @@ const growlinkApi = '/api/growlink';
 app.use(`${growlinkApi}/connection`, growlinkConnectionRouter);
 app.use(`${growlinkApi}/variety-links`, growlinkVarietyLinksRouter);
 app.use(`${growlinkApi}/harvest-actuals`, growlinkHarvestActualsRouter);
+app.use(`${growlinkApi}/yield-weeks`, createGrowlinkYieldWeeksRouter(supabaseYieldWeekRepo));
 
 // Serve static files from client build in production
 if (process.env.NODE_ENV === 'production') {
