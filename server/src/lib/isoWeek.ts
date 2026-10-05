@@ -62,3 +62,61 @@ export function fromIsoWeekIndex(index: number): IsoWeek {
 export function addIsoWeeks(year: number, week: number, n: number): IsoWeek {
   return fromIsoWeekIndex(isoWeekIndex(year, week) + n);
 }
+
+// ── Greenhouse local time ───────────────────────────────────────────────────
+// "Now" in CropLink means the greenhouse's wall clock, not UTC: at 8–11:59 PM
+// on a Sunday in Toronto it is already Monday in UTC, but the greenhouse is
+// still in the previous ISO week. Every "current week" and every week-based
+// cutoff instant goes through these helpers. DST is handled by Intl.
+
+export const GREENHOUSE_TZ = 'America/Toronto';
+
+const partsFormatter = new Map<string, Intl.DateTimeFormat>();
+function formatterFor(tz: string): Intl.DateTimeFormat {
+  let f = partsFormatter.get(tz);
+  if (!f) {
+    f = new Intl.DateTimeFormat('en-US', { timeZone: tz, hourCycle: 'h23', year: 'numeric', month: 'numeric', day: 'numeric', hour: 'numeric', minute: 'numeric', second: 'numeric' });
+    partsFormatter.set(tz, f);
+  }
+  return f;
+}
+
+/** Wall-clock date/time parts of an instant in `tz`. */
+export function zonedParts(d: Date, tz = GREENHOUSE_TZ): { year: number; month: number; day: number; hour: number; minute: number; second: number } {
+  const p: Record<string, number> = {};
+  for (const x of formatterFor(tz).formatToParts(d)) if (x.type !== 'literal') p[x.type] = Number(x.value);
+  return { year: p.year, month: p.month, day: p.day, hour: p.hour === 24 ? 0 : p.hour, minute: p.minute, second: p.second };
+}
+
+/** Offset of `tz` from UTC at instant `d`, in ms (Toronto: −4 h in EDT, −5 h in EST). */
+export function zoneOffsetMs(d: Date, tz = GREENHOUSE_TZ): number {
+  const p = zonedParts(d, tz);
+  const asUtc = Date.UTC(p.year, p.month - 1, p.day, p.hour, p.minute, p.second);
+  return asUtc - (Math.floor(d.getTime() / 1000) * 1000);
+}
+
+/** The instant of local midnight (00:00) on calendar date year-month-day in `tz`. */
+export function zonedMidnight(year: number, month: number, day: number, tz = GREENHOUSE_TZ): Date {
+  const guess = Date.UTC(year, month - 1, day);
+  let t = guess - zoneOffsetMs(new Date(guess), tz);
+  t = guess - zoneOffsetMs(new Date(t), tz); // second pass lands on the right side of a DST change
+  return new Date(t);
+}
+
+/** ISO week the greenhouse is in at instant `d` (local calendar date in `tz`). */
+export function greenhouseIsoWeek(d: Date, tz = GREENHOUSE_TZ): IsoWeek {
+  const p = zonedParts(d, tz);
+  return isoWeekOfDate(new Date(Date.UTC(p.year, p.month - 1, p.day)));
+}
+
+export function greenhouseIsoWeekIndex(d: Date, tz = GREENHOUSE_TZ): number {
+  const w = greenhouseIsoWeek(d, tz);
+  return isoWeekIndex(w.year, w.week);
+}
+
+/** Instant the ISO week starts in the greenhouse: Monday 00:00 local time. `dayOffset` moves by local calendar days (e.g. 8 = the following Tuesday 00:00). */
+export function greenhouseWeekStart(year: number, week: number, dayOffset = 0, tz = GREENHOUSE_TZ): Date {
+  const monday = isoWeekMonday(year, week); // UTC midnight of the Monday's calendar date
+  const date = new Date(monday.getTime() + dayOffset * MS_PER_DAY);
+  return zonedMidnight(date.getUTCFullYear(), date.getUTCMonth() + 1, date.getUTCDate(), tz);
+}

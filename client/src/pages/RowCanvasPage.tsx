@@ -4,7 +4,7 @@ import { MeasurementStem, NodeStatus, PlantNode, StemGrowthMeasurement, WeeklyNo
 import { nodesApi, stemGrowthApi, stemsApi, weeklyStatusesApi, yearsApi } from '../services/api';
 import { OfflineBanner } from '../components/OfflineBanner';
 import { onRemap } from '../services/optimisticStore';
-import { getIsoWeek } from '../utils/years';
+import { greenhouseIsoWeek } from '../utils/years';
 
 // Load all crop status icons eagerly; presence in the map determines whether to show an icon.
 const _statusIconModules = import.meta.glob<string>(
@@ -149,8 +149,7 @@ export function RowCanvasPage() {
   const varietyColor = ctx.varietyColor ?? null;
 
   const today = useMemo(() => new Date(), []);
-  const currentYear = today.getFullYear();
-  const currentWeek = getIsoWeek(today);
+  const { year: currentYear, week: currentWeek } = greenhouseIsoWeek(today); // greenhouse (Toronto) week, not the device clock
 
   const [seasonId,        setSeasonId]        = useState('');
   const [stems,           setStems]           = useState<MeasurementStem[]>([]);

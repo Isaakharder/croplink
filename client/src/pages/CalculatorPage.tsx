@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef, useMemo, Fragment } from 'react';
 import { Season, Variety, RipeningActualsResult, RipeningActualsRow, RipeningActualsOffsetCell, BreakerForecastMeta, SetWeekCohortClimateRow, HarvestAfwByWeek } from '../types';
 import { varietiesApi, yearsApi, harvestTimingApi, fruitSetByWeekApi, harvestAfwByWeekApi, ripeningActualsApi, climateTrainingDatasetApi } from '../services/api';
-import { defaultYear, getIsoWeek, uniqueYears, yearNumbers } from '../utils/years';
+import { defaultYear, greenhouseIsoWeek, uniqueYears, yearNumbers } from '../utils/years';
 import { resolveAfwCarryForward } from '../utils/afwCarryForward';
 import { CalculatorClimateExposure } from '../components/CalculatorClimateExposure';
 
@@ -177,8 +177,8 @@ function RowDetail({ row, breakerForecast }: { row: RipeningActualsRow; breakerF
 }
 
 export function CalculatorPage() {
-  const todayYear   = useMemo(() => new Date().getFullYear(), []);
-  const currentWeek = useMemo(() => getIsoWeek(new Date()), []);
+  // Greenhouse (Toronto) ISO year/week, not the device clock.
+  const { year: todayYear, week: currentWeek } = useMemo(() => greenhouseIsoWeek(), []);
 
   const [years, setYears] = useState<Season[]>([]);
   const [varieties, setVarieties] = useState<Variety[]>([]);

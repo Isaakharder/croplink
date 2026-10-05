@@ -4,20 +4,13 @@ import { supabase } from '../lib/supabase';
 import { chunkArray } from '../lib/chunkArray';
 import { resolveAfwCarryForward } from '../lib/afwCarryForward';
 import { fetchAllRows } from '../lib/paginatedFetch';
+import { greenhouseIsoWeek } from '../lib/isoWeek';
 
 const router = Router();
 
 // Below this many historical breaker→harvest observations, the learned
 // conversion timing isn't trustworthy enough to drive a kg adjustment.
 const MIN_SAMPLE_SIZE_FOR_ADJUSTMENT = 5;
-
-function getIsoWeek(d: Date): number {
-  const date = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
-  const day = date.getUTCDay() || 7;
-  date.setUTCDate(date.getUTCDate() + 4 - day);
-  const yearStart = new Date(Date.UTC(date.getUTCFullYear(), 0, 1));
-  return Math.ceil((((date.getTime() - yearStart.getTime()) / 86400000) + 1) / 7);
-}
 
 export interface BreakerLearningResult {
   varietyId: string;
@@ -72,8 +65,8 @@ export async function computeBreakerLearning(
   yearNum: number,
   today: Date = new Date()
 ): Promise<BreakerLearningResult> {
-  const currentYear = today.getFullYear();
-  const currentWeek = getIsoWeek(today);
+  // Greenhouse week (America/Toronto), not the server's UTC clock.
+  const { year: currentYear, week: currentWeek } = greenhouseIsoWeek(today);
   // For past years there is no "live" week — use the last week as a reference
   const queryWeek = yearNum === currentYear ? currentWeek : 52;
   const nextWeekWraps = queryWeek === 52;

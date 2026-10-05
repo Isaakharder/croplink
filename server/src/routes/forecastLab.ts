@@ -4,16 +4,13 @@
 import { randomUUID } from 'crypto';
 import { Router, Request, Response, NextFunction } from 'express';
 import { internalOpsAuth } from '../middleware/internalOpsAuth';
-import { isoWeekIndex, fromIsoWeekIndex, isoWeekOfDate } from '../lib/isoWeek';
+import { isoWeekIndex, fromIsoWeekIndex, isoWeekOfDate, greenhouseIsoWeek } from '../lib/isoWeek';
 import { buildLabForecasts, LabForecast, LAB_MODELS } from '../lib/forecastLab/engine';
 import { resolveActuals, scoreSnapshots, seasonStage, RECOMMENDATION_CRITERIA, ActualWeek } from '../lib/forecastLab/evaluation';
 import { assembleView } from '../lib/forecastLab/view';
-import { runForecastLabCycle, latestSurveyIndex } from '../lib/forecastLab/cycle';
-import { activeVarietiesForYear, loadSourceData, loadActualRows, supabaseLabStore, LabStore, VarietyRecord } from '../lib/forecastLab/repository';
-import { createGrowlinkV2Client } from '../lib/growlinkV2Client';
-import { runYieldWeekSync, runDeletionSync } from '../lib/growlinkYieldSyncRunner';
-import { supabaseYieldWeekRepo } from '../lib/growlinkYieldRepo';
-import { getConnectionRow } from './growlinkConnection';
+import { latestSurveyIndex } from '../lib/forecastLab/cycle';
+import { startCycleJob, sweepStaleRuns, activeRun, RunStore, CycleWorkerData } from '../lib/forecastLab/cycleJob';
+import { activeVarietiesForYear, loadSourceData, loadActualRows, supabaseLabStore, LabStore, LabRun, VarietyRecord } from '../lib/forecastLab/repository';
 
 const CACHE_MS = 10 * 60 * 1000;
 const currentCache = new Map<string, { at: number; value: LabForecast[] }>();
@@ -27,8 +24,25 @@ function stageFor(variety: VarietyRecord, actuals: Map<number, ActualWeek>) {
   return (index: number) => seasonStage(index, first, pull);
 }
 
-export function createForecastLabRouter(store: LabStore = supabaseLabStore): Router {
+function describeRun(r: LabRun) {
+  const hb = typeof r.summary?.heartbeatAt === 'string' ? (r.summary.heartbeatAt as string) : null;
+  return {
+    id: r.id, status: r.status, startedAt: r.started_at, finishedAt: r.finished_at, codeVersion: r.code_version, error: r.error,
+    heartbeatAt: hb, secondsSinceHeartbeat: hb ? Math.round((Date.now() - Date.parse(hb)) / 1000) : null,
+    progress: r.summary?.progress ?? null, summary: r.status === 'running' ? null : r.summary,
+  };
+}
+
+export interface ForecastLabRouterOptions {
+  runStore?: RunStore;
+  /** Starts the background job. Defaults to a worker-thread job. */
+  startJob?: (data: CycleWorkerData) => void;
+}
+
+export function createForecastLabRouter(store: LabStore = supabaseLabStore, opts: ForecastLabRouterOptions = {}): Router {
   const router = Router();
+  const runStore = opts.runStore ?? (store as RunStore);
+  const startJob = opts.startJob ?? ((data: CycleWorkerData) => { startCycleJob({ store: runStore, onFinished: () => currentCache.clear() }, data); });
 
   router.get('/view', async (req: Request, res: Response, next: NextFunction) => {
     try {
@@ -139,22 +153,38 @@ export function createForecastLabRouter(store: LabStore = supabaseLabStore): Rou
     } catch (e) { next(e); }
   });
 
+  // Starts a cycle as a background job and returns at once (202). Progress and
+  // the final status are on GET /runs/:id; abandoned runs are marked failed.
   router.post('/cycle', internalOpsAuth, async (req: Request, res: Response, next: NextFunction) => {
     try {
-      const year = Number(req.body?.year ?? isoWeekOfDate(new Date()).year);
-      const key = process.env.GROWLINK_CROPLINK_KEY;
-      const baseUrl = process.env.GROWLINK_BASE_URL || (await getConnectionRow())?.base_url;
-      const sync = key && baseUrl && req.body?.skipSync !== true
-        ? async () => {
-            const deps = { client: createGrowlinkV2Client({ baseUrl, key }), repo: supabaseYieldWeekRepo, newId: randomUUID };
-            return [await runYieldWeekSync(deps), await runDeletionSync(deps)].map((r) => ({ kind: r.kind, status: r.status, fetched: r.fetched, created: r.created, updated: r.updated, rejected: r.rejected, error: r.error }));
-          }
-        : undefined;
-      const summary = await runForecastLabCycle({
-        store, varieties: activeVarietiesForYear, load: loadSourceData, now: () => new Date(), newId: randomUUID, codeVersion: codeVersion(), sync,
-      }, year);
-      currentCache.clear();
-      res.status(summary.status === 'succeeded' ? 200 : summary.status === 'unavailable' ? 503 : 207).json(summary);
+      if (!(await store.available())) return res.status(503).json({ status: 'unavailable', error: 'Forecast Lab tables are not available.' });
+      const year = Number(req.body?.year ?? greenhouseIsoWeek(new Date()).year);
+      if (!Number.isInteger(year)) return res.status(400).json({ error: 'year must be an integer' });
+      const running = await activeRun(runStore);
+      if (running) return res.status(409).json({ error: 'A Forecast Lab cycle is already running.', runId: running.id, statusUrl: `/api/forecast-lab/runs/${running.id}` });
+      const runId = randomUUID();
+      await runStore.createRun({ id: runId, kind: 'cycle', started_at: new Date().toISOString(), code_version: codeVersion() });
+      startJob({ runId, year, skipSync: req.body?.skipSync === true });
+      res.status(202).json({ runId, status: 'running', year, statusUrl: `/api/forecast-lab/runs/${runId}` });
+    } catch (e) { next(e); }
+  });
+
+  router.get('/runs', async (_req: Request, res: Response, next: NextFunction) => {
+    try {
+      if (!(await store.available())) return res.json({ runs: [] });
+      await sweepStaleRuns(runStore);
+      res.json({ runs: (await runStore.listRuns({ limit: 10 })).map(describeRun) });
+    } catch (e) { next(e); }
+  });
+
+  router.get('/runs/:id', async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const id = String(req.params.id);
+      if (!/^[0-9a-f-]{36}$/i.test(id)) return res.status(400).json({ error: 'invalid run id' });
+      await sweepStaleRuns(runStore);
+      const run = await runStore.getRun(id);
+      if (!run) return res.status(404).json({ error: 'run not found' });
+      res.json(describeRun(run));
     } catch (e) { next(e); }
   });
 

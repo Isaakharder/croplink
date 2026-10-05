@@ -128,7 +128,8 @@ console.log('actuals and settlement');
   assert('deleted-upstream v2 rows are ignored (v1 used)', [a.get(I(39))?.kg, a.get(I(39))?.source], [9860, 'growlink-v1']);
   // W39 = Sep 21–27 (settled from Oct 8), W40 = Sep 28–Oct 4 (settled from Oct 15)
   assert('v1 settlement by the 10-day rule on Oct 8: W39 settled, W40 provisional', [a.get(I(39))?.settlement, a.get(I(40))?.settlement], ['settled', 'provisional']);
-  assert('…W40 settles 10 days after its Sunday', resolveActuals([], [{ year: Y, week_number: 40, kg: 1, updated_at: null }], new Date('2026-10-15T00:00:00Z')).get(I(40))?.settlement, 'settled');
+  const w40At = (t: string) => resolveActuals([], [{ year: Y, week_number: 40, kg: 1, updated_at: null }], new Date(t)).get(I(40))?.settlement;
+  assert('…W40 settles 10 days after its Sunday ends in Toronto (Oct 5 00:00 EDT = 04:00Z → Oct 15 04:00Z)', [w40At('2026-10-15T03:59:59Z'), w40At('2026-10-15T04:00:00Z')], ['provisional', 'settled']);
 }
 
 console.log('snapshots');

@@ -164,8 +164,16 @@ export async function loadSourceData(variety: VarietyRecord, year: number): Prom
 
 // ── Snapshots, runs, exclusions, config history ─────────────────────────────
 
+export interface LabRun { id: string; kind: string; status: 'running' | 'succeeded' | 'partial' | 'failed'; started_at: string; finished_at: string | null; code_version: string | null; summary: Record<string, unknown> | null; error: string | null }
+
 export interface LabStore {
   available(): Promise<boolean>;
+  getRun?(id: string): Promise<LabRun | null>;
+  listRuns?(opts: { status?: LabRun['status']; limit: number }): Promise<LabRun[]>;
+  /** Updates a RUNNING run's summary (heartbeat/progress). No effect once the run has finished. */
+  heartbeat?(id: string, summary: Record<string, unknown>): Promise<void>;
+  /** Marks a run failed only if it is still running. Returns whether it changed. */
+  failIfRunning?(id: string, patch: { finished_at: string; summary: unknown; error: string }): Promise<boolean>;
   createRun(run: { id: string; kind: 'cycle' | 'manual'; started_at: string; code_version: string | null }): Promise<void>;
   finishRun(id: string, patch: { status: string; finished_at: string; summary: unknown; error: string | null }): Promise<void>;
   /** Inserts new rows; rows whose natural key already exists are left untouched (never updated). Returns how many were new. */
@@ -190,6 +198,27 @@ export const supabaseLabStore: LabStore = {
   async finishRun(id, patch) {
     const { error } = await supabase.from('forecast_lab_runs').update(patch).eq('id', id);
     if (error) throw new Error(error.message);
+  },
+  async getRun(id) {
+    const { data, error } = await supabase.from('forecast_lab_runs').select('*').eq('id', id).maybeSingle();
+    if (error) throw new Error(error.message);
+    return (data as LabRun | null) ?? null;
+  },
+  async listRuns({ status, limit }) {
+    let q = supabase.from('forecast_lab_runs').select('*').order('started_at', { ascending: false }).limit(limit);
+    if (status) q = q.eq('status', status);
+    const { data, error } = await q;
+    if (error) throw new Error(error.message);
+    return (data ?? []) as LabRun[];
+  },
+  async heartbeat(id, summary) {
+    const { error } = await supabase.from('forecast_lab_runs').update({ summary }).eq('id', id).eq('status', 'running');
+    if (error) throw new Error(error.message);
+  },
+  async failIfRunning(id, patch) {
+    const { data, error } = await supabase.from('forecast_lab_runs').update({ ...patch, status: 'failed' }).eq('id', id).eq('status', 'running').select('id');
+    if (error) throw new Error(error.message);
+    return (data ?? []).length > 0;
   },
   async insertSnapshots(rows) {
     let inserted = 0;

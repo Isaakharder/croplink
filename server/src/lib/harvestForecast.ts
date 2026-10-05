@@ -9,7 +9,7 @@
 // Weeks are handled as ISO-week indexes (see isoWeek.ts), so set→harvest
 // offsets, maturity ages, and forecast horizons are exact across W52/W53
 // and year boundaries.
-import { IsoWeek, isoWeekIndex, fromIsoWeekIndex, isoWeekMonday } from './isoWeek';
+import { IsoWeek, isoWeekIndex, fromIsoWeekIndex, greenhouseWeekStart } from './isoWeek';
 import { harvestWindowFraction } from './cropWindow';
 import { computeEmpiricalHarvestTimingFromRows, FruitInstanceRow, OFFSETS } from './empiricalHarvestTiming';
 
@@ -58,9 +58,9 @@ export interface KnowledgeCutoff {
  * forecast is run the Monday following the measurement week; the extra day
  * absorbs Sunday-evening entries in North American time zones).
  */
+/** Data cutoff for a forecast as of `asOf`: statuses entered before Tuesday 00:00 greenhouse time (America/Toronto) after that week. */
 export function forecastCutoff(asOf: IsoWeek): KnowledgeCutoff {
-  const nextMonday = isoWeekMonday(asOf.year, asOf.week).getTime() + 7 * 86_400_000;
-  return { asOfIndex: isoWeekIndex(asOf.year, asOf.week), enteredBy: new Date(nextMonday + 86_400_000) };
+  return { asOfIndex: isoWeekIndex(asOf.year, asOf.week), enteredBy: greenhouseWeekStart(asOf.year, asOf.week, 8) };
 }
 
 function visible(events: StatusEvent[], cutoff?: KnowledgeCutoff): StatusEvent[] {
@@ -453,7 +453,7 @@ export interface CalibratedForecastResult extends Omit<ForecastResult, 'weeks'> 
 /** True once week `index`'s actual can be treated as final on `date`. */
 export function isSettled(index: number, date: Date): boolean {
   const w = fromIsoWeekIndex(index);
-  const weekEnd = isoWeekMonday(w.year, w.week).getTime() + 7 * 86_400_000; // end of Sunday
+  const weekEnd = greenhouseWeekStart(w.year, w.week, 7).getTime(); // end of Sunday, greenhouse time (as GrowLink's iso_week_end_local)
   return weekEnd + ACTUALS_SETTLE_DAYS * 86_400_000 <= date.getTime();
 }
 

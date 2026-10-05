@@ -13,7 +13,7 @@
 //   - time: a forecast only sees manual entries made by its knowledge time
 //     (issue time for live forecasts, the as-of cutoff for hindcasts), and
 //     GrowLink values only as they were — unchanged and settled — at the cutoff.
-import { isoWeekIndex, isoWeekOfDate, isValidIsoWeek, weeksInIsoYear, fromIsoWeekIndex } from './isoWeek';
+import { isoWeekIndex, isoWeekOfDate, isValidIsoWeek, weeksInIsoYear, fromIsoWeekIndex, greenhouseIsoWeekIndex } from './isoWeek';
 import { isSettled } from './harvestForecast';
 import { harvestWindowFraction } from './cropWindow';
 
@@ -110,10 +110,9 @@ export function pullOutIndex(pullOutDate: string | null | undefined): number | n
   return isoWeekIndex(w.year, w.week);
 }
 
-/** Editable weeks: the current ISO week through the pull-out week (inclusive; W53 and year rollover exact). */
+/** Editable weeks: the greenhouse's current ISO week (America/Toronto) through the pull-out week (inclusive; W53 and year rollover exact). */
 export function editableWeeks(now: Date, pullOutDate: string | null | undefined): { from: number; to: number; pullOutKnown: boolean } {
-  const n = isoWeekOfDate(now);
-  const from = isoWeekIndex(n.year, n.week);
+  const from = greenhouseIsoWeekIndex(now);
   const pull = pullOutIndex(pullOutDate);
   if (pull == null) return { from, to: from + NO_PULL_OUT_WEEKS - 1, pullOutKnown: false };
   // A pull-out on Monday of a week leaves 1/7 of it; on/after pull-out nothing is harvested.

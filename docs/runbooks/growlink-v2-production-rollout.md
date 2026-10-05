@@ -314,10 +314,13 @@ Rollback (export first if growers have entered forecasts): `begin; drop table pu
 
 Until E2 is applied the editor shows "AFW forecasts are not enabled yet" and the Lab runs exactly as before.
 
-## F. Forecast Lab cycle (after E and step 7)
+## F. Forecast Lab cycle (background job)
 
-- First run, by hand: `POST /api/forecast-lab/cycle` with `X-Internal-Ops-Key`. It syncs GrowLink v2 if `GROWLINK_CROPLINK_KEY` is set, locks live forecasts, and backfills labelled hindcasts once. Re-running is safe: snapshots are insert-only and keyed.
-- Railway cron service `croplink-forecast-lab-cron`, same repo as the existing cron services: start command `npm run cron:forecast-lab`, variables `CROPLINK_INTERNAL_BASE_URL` and `INTERNAL_OPS_KEY` (as for the rollup cron). Suggested schedule `30 10 * * *` (daily 10:30 UTC). Weekly settlement is picked up automatically, because scoring is computed from settled weeks when the page is read.
+- `POST /api/forecast-lab/cycle` (`X-Internal-Ops-Key`, body `{"year": 2026, "skipSync": true|false}`) creates a run row, starts the cycle in a **worker thread** and returns **202** with `runId` and `statusUrl` at once. A second start while a run is live returns 409 with that run's id.
+- `GET /api/forecast-lab/runs/:id` (and `/runs` for the latest 10): `status` (`running` → `succeeded` / `partial` / `failed`), `heartbeatAt`, `secondsSinceHeartbeat`, `progress` (phase, variety, hindcast weeks done/total), and the final summary.
+- While the worker is alive the API writes a heartbeat every 20 s. A run with no heartbeat for 3 min (restart, crash, redeploy) is marked `failed` ("abandoned …") by any status read, any new start and a 5-minute sweep. A worker crash or a run over 90 min is marked failed immediately. Snapshots are insert-only, so re-running resumes.
+- Cron service `croplink-forecast-lab-cron`: start command `npm run cron:forecast-lab`, variables `CROPLINK_INTERNAL_BASE_URL` and `INTERNAL_OPS_KEY`; it starts the cycle and polls the run until it finishes (exit 1 on failed or still running after `FORECAST_LAB_CRON_TIMEOUT_MS`, default 95 min). Suggested schedule `30 10 * * *`.
+- All "current week", data-cutoff and settlement instants use **America/Toronto** (forecast cutoff: Tuesday 00:00 Toronto after the as-of week; settlement: 10 days after Monday 00:00 Toronto, as GrowLink).
 
 ## G. AFW Forecast saves — no login
 

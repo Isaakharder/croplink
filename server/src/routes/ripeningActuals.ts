@@ -3,6 +3,7 @@ import { SupabaseClient } from '@supabase/supabase-js';
 import { supabase } from '../lib/supabase';
 import { chunkArray } from '../lib/chunkArray';
 import { fetchAllRows } from '../lib/paginatedFetch';
+import { greenhouseIsoWeek } from '../lib/isoWeek';
 
 const router = Router();
 
@@ -12,14 +13,6 @@ const MIN_SAMPLE_SIZE_FOR_LEARNED_PROFILE = 5;
 const BUCKET_KEYS = ['same', 'plus1', 'plus2', 'plus3', 'later'] as const;
 type BucketKey = (typeof BUCKET_KEYS)[number];
 type Profile = Record<BucketKey, number>; // fractions 0..1, sums to 1
-
-function getIsoWeek(d: Date): number {
-  const date = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
-  const day = date.getUTCDay() || 7;
-  date.setUTCDate(date.getUTCDate() + 4 - day);
-  const yearStart = new Date(Date.UTC(date.getUTCFullYear(), 0, 1));
-  return Math.ceil((((date.getTime() - yearStart.getTime()) / 86400000) + 1) / 7);
-}
 
 function median(values: number[]): number | null {
   if (values.length === 0) return null;
@@ -184,8 +177,8 @@ export async function computeRipeningActuals(
   const stemLabel = (i: { measurement_row_id: string; measurement_stem_id: string }) =>
     `${rowNameById.get(i.measurement_row_id) ?? '?'} / ${stemNameById.get(i.measurement_stem_id) ?? '?'}`;
 
-  const currentActualYear = today.getFullYear();
-  const currentActualWeek = getIsoWeek(today);
+  // Greenhouse week (America/Toronto), not the server's UTC clock.
+  const { year: currentActualYear, week: currentActualWeek } = greenhouseIsoWeek(today);
   const nowAbsWeek =
     yearNum < currentActualYear
       ? yearNum * 52 + 52

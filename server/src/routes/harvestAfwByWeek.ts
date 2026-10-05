@@ -1,6 +1,6 @@
 import { Router, Request, Response, NextFunction } from 'express';
 import { supabase } from '../lib/supabase';
-import { isoWeekIndex, isoWeekOfDate, isValidIsoWeek, weeksInIsoYear } from '../lib/isoWeek';
+import { isoWeekIndex, greenhouseIsoWeekIndex, isValidIsoWeek, weeksInIsoYear } from '../lib/isoWeek';
 
 const router = Router();
 
@@ -11,8 +11,7 @@ const router = Router();
  * boundaries order correctly.
  */
 function isFutureWeek(year: number, week: number): boolean {
-  const today = isoWeekOfDate(new Date());
-  return isoWeekIndex(year, week) > isoWeekIndex(today.year, today.week);
+  return isoWeekIndex(year, week) > greenhouseIsoWeekIndex(new Date());
 }
 
 router.get('/', async (req: Request, res: Response, next: NextFunction) => {

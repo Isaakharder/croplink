@@ -41,6 +41,8 @@ import growlinkConnectionRouter from './routes/growlinkConnection';
 import { createGrowlinkYieldWeeksRouter } from './routes/growlinkYieldWeeks';
 import { supabaseYieldWeekRepo } from './lib/growlinkYieldRepo';
 import { createForecastLabRouter } from './routes/forecastLab';
+import { sweepStaleRuns, RunStore } from './lib/forecastLab/cycleJob';
+import { supabaseLabStore } from './lib/forecastLab/repository';
 import { createAfwForecastsRouter } from './routes/afwForecasts';
 
 const app = express();
@@ -108,6 +110,10 @@ if (process.env.NODE_ENV === 'production') {
 }
 
 app.use(errorHandler);
+
+// Forecast Lab: mark cycle runs abandoned by a restart/crash/redeploy as failed,
+// even when nobody reads their status (see lib/forecastLab/cycleJob.ts).
+setInterval(() => { sweepStaleRuns(supabaseLabStore as RunStore).catch(() => { /* table missing or transient: next sweep retries */ }); }, 5 * 60_000).unref();
 
 app.listen(PORT, () => {
   console.log(`GrowLink Projection server running on port ${PORT}`);

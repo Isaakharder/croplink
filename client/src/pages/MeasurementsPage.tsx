@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { MeasurementSummaryRecord, MeasurementSummaryResponse, Season, Variety } from '../types';
 import { measurementSummaryApi, varietiesApi, yearsApi } from '../services/api';
-import { defaultYear, getIsoWeek, isoWeeksInYear, uniqueYears, yearNumbers } from '../utils/years';
+import { defaultYear, greenhouseIsoWeek, isoWeeksInYear, uniqueYears, yearNumbers } from '../utils/years';
 
 const EMPTY_SUMMARY: MeasurementSummaryResponse = {
   summary: {
@@ -106,7 +106,7 @@ export function MeasurementsPage() {
   const [varieties, setVarieties] = useState<Variety[]>([]);
   const [selectedYear, setSelectedYear] = useState(0);
   const [selectedVariety, setSelectedVariety] = useState('');
-  const [selectedWeek, setSelectedWeek] = useState(() => getIsoWeek(new Date()));
+  const [selectedWeek, setSelectedWeek] = useState(() => greenhouseIsoWeek().week);
   const [summaryData, setSummaryData] = useState<MeasurementSummaryResponse>(EMPTY_SUMMARY);
   const [summaryError, setSummaryError] = useState<string | null>(null);
   const [loadingSummary, setLoadingSummary] = useState(false);

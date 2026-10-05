@@ -218,7 +218,8 @@ console.log('kg calibration — settled actuals only');
   for (let w = 10; w <= 30; w++) half.set(isoWeekIndex(Y, w), 5); // actual = half the model
   const weeksOf = (r: { calibration: { weeks: { index: number }[] } }) => r.calibration.weeks.map((p) => p.index - isoWeekIndex(Y, 1) + 1);
 
-  assert('isSettled: a week is final 10 days after its Sunday', [isSettled(isoWeekIndex(Y, 28), new Date('2026-07-22T00:00:00Z')), isSettled(isoWeekIndex(Y, 28), new Date('2026-07-23T00:00:00Z'))], [false, true]);
+  // W28 ends Mon Jul 13 00:00 Toronto (EDT) = 04:00Z; settled 10 days later, Jul 23 04:00Z.
+  assert('isSettled: a week is final 10 days after its Sunday ends in Toronto', [isSettled(isoWeekIndex(Y, 28), new Date('2026-07-23T03:59:59Z')), isSettled(isoWeekIndex(Y, 28), new Date('2026-07-23T04:00:00Z'))], [false, true]);
 
   const rolling = forecastHarvestCalibrated(build, 'C', wk(30), half, 'rolling');
   // Forecast date is Tue of W31; W29 and W30 are not settled yet.

@@ -4,14 +4,8 @@ import { MobileRowCard, Variety } from '../types';
 import { mobileRowsApi, rowsApi, varietiesApi } from '../services/api';
 import { OfflineBanner } from '../components/OfflineBanner';
 import { onRemap } from '../services/optimisticStore';
+import { greenhouseIsoWeek, GREENHOUSE_TZ } from '../utils/years';
 
-function getIsoWeek(d: Date): number {
-  const date = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
-  const dayNum = date.getUTCDay() || 7;
-  date.setUTCDate(date.getUTCDate() + 4 - dayNum);
-  const yearStart = new Date(Date.UTC(date.getUTCFullYear(), 0, 1));
-  return Math.ceil((((date.getTime() - yearStart.getTime()) / 86400000) + 1) / 7);
-}
 
 function TextPromptModal({
   title,
@@ -66,9 +60,8 @@ function TextPromptModal({
 
 export function MobileMeasurementsPage() {
   const today = useMemo(() => new Date(), []);
-  const currentYear = today.getFullYear();
-  const currentWeek = getIsoWeek(today);
-  const todayLabel = today.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
+  const { year: currentYear, week: currentWeek } = greenhouseIsoWeek(today); // greenhouse (Toronto) week, not the device clock
+  const todayLabel = today.toLocaleDateString(undefined, { timeZone: GREENHOUSE_TZ, weekday: 'short', month: 'short', day: 'numeric' });
 
   const navigate = useNavigate();
 

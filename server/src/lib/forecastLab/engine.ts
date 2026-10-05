@@ -26,7 +26,7 @@ import {
   inferHarvestCheckWeeks, buildFruitObservations, fitIntervalHazards, forecastOpenFruit, resampleStems, mulberry32, harvestProbabilities, FruitObservation,
 } from '../intervalSurvival';
 import { harvestWindowFraction } from '../cropWindow';
-import { IsoWeek, isoWeekIndex, fromIsoWeekIndex, isoWeekOfDate } from '../isoWeek';
+import { IsoWeek, isoWeekIndex, fromIsoWeekIndex, greenhouseIsoWeek } from '../isoWeek';
 import { ManualAfwEntry, TargetAfw, TargetAfwSource, effectiveManualAfw, latestSettledGrowlinkAfw, resolveTargetAfw } from '../afwForecast';
 
 export const LAB_HORIZON = 8;
@@ -361,7 +361,7 @@ export function buildLabForecasts(inputs: LabInputs, asOf: IsoWeek, opts: BuildO
   const cutoff = forecastCutoff(asOf);
   const cov = summarizeWeeks(inputs.events, cutoff);
   const latestMeasured = Math.max(-Infinity, ...[...cov.keys()]);
-  const nowWeek = isoWeekOfDate(opts.now);
+  const nowWeek = greenhouseIsoWeek(opts.now);
   const baseWarnings: string[] = [];
   if (!isFinite(latestMeasured)) baseWarnings.push('no-measurements: no survey data before the cutoff');
   else if (latestMeasured < asOfIndex) baseWarnings.push(`measurements-stale: last survey W${fromIsoWeekIndex(latestMeasured).week}, forecast as of W${asOf.week}`);
