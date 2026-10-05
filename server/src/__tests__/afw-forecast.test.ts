@@ -251,10 +251,10 @@ console.log('cycle: live snapshots use forecasts entered by issue time; hindcast
     process.env.SUPABASE_SERVICE_ROLE_KEY ??= 'dummy';
     const express = (await import('express')).default;
     const { createAfwForecastsRouter } = await import('../routes/afwForecasts');
-    const { createAfwEditorAuth, MAX_FAILURES, WINDOW_MS } = await import('../middleware/afwEditorAuth');
-    const PASS = 'test-only-editor-passcode';
+    const { createSaveRateLimit } = await import('../middleware/saveRateLimit');
     let clock = Date.parse('2026-10-04T12:30:00Z');
-    deps.writeAuth = createAfwEditorAuth({ env: { AFW_EDITOR_KEY: PASS }, now: () => clock });
+    const LIMIT = 8;
+    deps.writeGuard = createSaveRateLimit({ limit: LIMIT, windowMs: 60_000, now: () => clock });
     const app = express();
     app.use(express.json());
     app.use('/api/afw-forecasts', createAfwForecastsRouter(deps));
@@ -262,50 +262,21 @@ console.log('cycle: live snapshots use forecasts entered by issue time; hindcast
     const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}/api/afw-forecasts`;
     const VID = '00000000-0000-4000-8000-0000000000aa';
     const get = async () => (await fetch(`${url}?varietyId=${VID}`)).json() as Promise<any>;
-    const postAs = async (body: unknown, key: string | null, ip = '203.0.113.7') => {
-      const headers: Record<string, string> = { 'Content-Type': 'application/json', 'X-Forwarded-For': `10.0.0.1, ${ip}` };
-      if (key != null) headers['X-AFW-Editor-Key'] = key;
-      const r = await fetch(url, { method: 'POST', headers, body: JSON.stringify(body) });
+    const postAs = async (body: unknown, ip = '203.0.113.7') => {
+      const r = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Forwarded-For': `10.0.0.1, ${ip}` }, body: JSON.stringify(body) });
       return { status: r.status, body: await r.json() as any };
     };
-    const post = (body: unknown) => postAs(body, PASS, '198.51.100.1');
+    const post = (body: unknown) => postAs(body, '198.51.100.1');
     try {
       const g = await get();
       assert('GET: current week through pull-out, W53 included', [g.weeks.length, g.weeks[0].label, g.weeks.at(-1).label, g.window.pullOutKnown], [14, '2026-W40', '2026-W53', true]);
       assert('GET: without forecasts every week uses settled GrowLink W38', g.weeks.every((w: any) => w.used.source === 'growlink-settled' && w.used.fromWeek === '2026-W38'), true);
 
-      const valid = { varietyId: VID, expectedLatestEntryId: 0, changes: [{ year: 2026, week: 41, grams: 200 }] };
-      assert('no passcode → 401, nothing saved', [(await postAs(valid, null)).status, log.length], [401, 0]);
-      const wrong = await postAs(valid, 'wrong');
-      assert('wrong passcode → 401 (asks for the passcode), nothing saved', [wrong.status, wrong.body.passcodeRequired, log.length], [401, true, 0]);
-      for (let k = 2; k < MAX_FAILURES; k++) await postAs(valid, 'wrong');
-      const locked = await postAs(valid, PASS);
-      assert(`after ${MAX_FAILURES} wrong passcodes that IP is locked out, even with the right one`, [locked.status, log.length], [429, 0]);
-      assert('…other IPs are not affected (a valid save from another IP still passes auth)', (await postAs({ ...valid, expectedLatestEntryId: 99 }, PASS, '192.0.2.9')).status, 409);
-      clock += WINDOW_MS + 1;
-      assert('…lockout ends after the window', (await postAs({ ...valid, expectedLatestEntryId: 99 }, PASS)).status, 409);
-      assert('GET needs no passcode (read API stays open)', (await fetch(`${url}?varietyId=${VID}`)).status, 200);
+      assert('GET is open (read API)', (await fetch(`${url}?varietyId=${VID}`)).status, 200);
       const { buildEditorModel } = await import('../routes/afwForecasts');
       const noGl = buildEditorModel({ variety: { id: VID, name: 'Mathieu', pull_out_date: '2026-12-31', is_active: true }, entries: [], now: new Date('2026-10-04T12:00:00Z'), growlinkLinked: true, v2Available: true,
         afw: [{ index: I(32), grams: 218, source: 'croplink-manual', knownAt: '2026-08-08T00:00:00Z', settled: null }] });
       assert('no GrowLink AFW at all → explicit warning, and the CropLink fallback is named', [noGl.warnings.some((w) => w.startsWith('No GrowLink AFW has been received yet')), noGl.warnings.some((w) => w.includes("CropLink's 218 g from 2026-W32")), noGl.baseline?.source], [true, true, 'croplink-manual']);
-      const unconfigured = express();
-      unconfigured.use(express.json());
-      unconfigured.use('/x', createAfwForecastsRouter({ ...deps, writeAuth: createAfwEditorAuth({ env: {} }) }));
-      const s2 = unconfigured.listen(0);
-      const r2 = await fetch(`http://127.0.0.1:${(s2.address() as AddressInfo).port}/x`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-AFW-Editor-Key': 'anything' }, body: JSON.stringify(valid) });
-      s2.close();
-      assert('AFW_EDITOR_KEY not set on the server → 503 for every save (fails closed)', [r2.status, log.length], [503, 0]);
-      const { writeAuth: _w, ...noAuthDeps } = deps;
-      delete process.env.AFW_EDITOR_KEY;
-      const dflt = express();
-      dflt.use(express.json());
-      dflt.use('/y', createAfwForecastsRouter(noAuthDeps));
-      const s3 = dflt.listen(0);
-      const r3 = await fetch(`http://127.0.0.1:${(s3.address() as AddressInfo).port}/y`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(valid) });
-      s3.close();
-      assert('the router is protected by default (no auth injected → passcode middleware, fails closed)', [r3.status, log.length], [503, 0]);
-
       const stale = await post({ varietyId: VID, expectedLatestEntryId: 7, changes: [{ year: 2026, week: 41, grams: 200 }] });
       assert('stale editor → 409, nothing saved', [stale.status, log.length], [409, 0]);
       const bad = await post({ varietyId: VID, expectedLatestEntryId: 0, changes: [{ year: 2026, week: 41, grams: 200 }, { year: 2026, week: 39, grams: 200 }] });
@@ -313,11 +284,26 @@ console.log('cycle: live snapshots use forecasts entered by issue time; hindcast
 
       const ok = await post({ varietyId: VID, expectedLatestEntryId: 0, changes: [{ year: 2026, week: 40, grams: 200 }, { year: 2026, week: 43, grams: 230 }] });
       const u = (b: any, label: string) => b.weeks.find((w: any) => w.label === label).used;
-      assert('save → 200 with recalculated sources', [ok.status, ok.body.saved, u(ok.body, '2026-W40').source, u(ok.body, '2026-W41').source, u(ok.body, '2026-W41').fromWeek, u(ok.body, '2026-W43').grams, u(ok.body, '2026-W53').fromWeek],
+      assert('save with no passcode or auth header → 200 with recalculated sources', [ok.status, ok.body.saved, u(ok.body, '2026-W40').source, u(ok.body, '2026-W41').source, u(ok.body, '2026-W41').fromWeek, u(ok.body, '2026-W43').grams, u(ok.body, '2026-W53').fromWeek],
         [200, 2, 'manual-exact', 'manual-carried', '2026-W40', 230, '2026-W43']);
       const cleared = await post({ varietyId: VID, expectedLatestEntryId: ok.body.latestEntryId, changes: [{ year: 2026, week: 43, grams: null }] });
       assert('clear override → W43 falls back to the carried W40 value; history keeps both', [cleared.status, u(cleared.body, '2026-W43').source, u(cleared.body, '2026-W43').grams, cleared.body.history.map((h: any) => h.action)], [200, 'manual-carried', 200, ['clear', 'set', 'set']]);
       assert('GrowLink actual AFW is never written', JSON.stringify(glPoints), glBefore);
+      const sent = log.length;
+      const burst = [];
+      for (let k = 0; k < LIMIT + 2; k++) burst.push((await postAs({ varietyId: VID, expectedLatestEntryId: -5, changes: [] }, '203.0.113.50')).status);
+      assert(`rate limit: ${LIMIT} saves per window per IP, then 429 (nothing stored)`, [burst.filter((x) => x === 429).length, log.length === sent], [2, true]);
+      assert('…other IPs are not limited', (await postAs({ varietyId: VID, expectedLatestEntryId: -5, changes: [] }, '192.0.2.77')).status, 409);
+      clock += 60_001;
+      assert('…the limit resets after the window', (await postAs({ varietyId: VID, expectedLatestEntryId: -5, changes: [] }, '203.0.113.50')).status, 409);
+      const { writeGuard: _g, ...defaultDeps } = deps;
+      const dflt = express();
+      dflt.use(express.json());
+      dflt.use('/y', createAfwForecastsRouter(defaultDeps));
+      const s3 = dflt.listen(0);
+      const r3 = await fetch(`http://127.0.0.1:${(s3.address() as AddressInfo).port}/y`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ varietyId: VID, expectedLatestEntryId: -5, changes: [] }) });
+      s3.close();
+      assert('default router (no guard injected) applies the save rate limit and reaches the handler', r3.status, 409);
       assert('no GrowLink actual exists for W40+ yet → none shown', g.weeks.every((w: any) => w.growlinkActual === null), true);
       const unknown = await fetch(`${url}?varietyId=00000000-0000-4000-8000-0000000000bb`);
       assert('unknown variety → 404', unknown.status, 404);

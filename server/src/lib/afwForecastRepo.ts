@@ -31,7 +31,7 @@ export const supabaseAfwForecastRepo: AfwForecastRepo = {
     }
   },
   async insertBatch(varietyId, batchId, changes) {
-    const rows = changes.map((c) => ({ batch_id: batchId, variety_id: varietyId, iso_year: c.year, iso_week: c.week, action: c.grams == null ? 'clear' : 'set', grams: c.grams, entered_by: 'editor-passcode' }));
+    const rows = changes.map((c) => ({ batch_id: batchId, variety_id: varietyId, iso_year: c.year, iso_week: c.week, action: c.grams == null ? 'clear' : 'set', grams: c.grams, entered_by: 'afw-editor' }));
     const { data, error } = await supabase.from('afw_forecast_entries').insert(rows).select('id, variety_id, iso_year, iso_week, action, grams, entered_at');
     if (error) throw new Error(error.message);
     return ((data ?? []) as Row[]).map(toEntry);
